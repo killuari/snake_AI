@@ -24,7 +24,8 @@ class Direction(Enum):
 class Snake:
     def __init__(self, screen, pos):
         self.screen = screen
-        self.snake_list = [SnakePart(screen, pos)]
+        self.head = SnakePart(screen, pos)
+        self.snake_list = [self.head, SnakePart(screen, pos), SnakePart(screen, pos)]
 
     def add_part(self):
         self.snake_list.append(SnakePart(self.screen, self.snake_list[-1].pos))
@@ -104,6 +105,10 @@ while running:
 
     snake.move(dir)
     snake.draw()
+
+    if snake.head.pos.x + 15 == apple.pos.x and snake.head.pos.y + 15 == apple.pos.y:
+        apple.place()
+        snake.add_part()
 
     apple.draw()
 
