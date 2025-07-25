@@ -1,12 +1,19 @@
-import pygame
+import pygame, random
 from enum import Enum
+
+GRID_SIZE = 30
+GRID_WIDTH = 50
+GRID_HEIGHT = 30
+
+window_width = GRID_WIDTH * GRID_SIZE
+window_height = GRID_HEIGHT * GRID_SIZE
 
 # pygame setup
 pygame.init()
-screen = pygame.display.set_mode((1700, 956))
+screen = pygame.display.set_mode((window_width, window_height))
 clock = pygame.time.Clock()
 running = True
-dt = 0
+
 
 class Direction(Enum):
     LEFT = (-1, 0)
@@ -24,14 +31,11 @@ class Snake:
 
     def move(self, dir: Direction):
         pos = self.snake_list[0].pos.copy()
-        print(pos)
         self.snake_list[0].move(dir)
     
         for part in self.snake_list[1:]:
-            print(part.pos)
             new_pos = part.pos.copy()
             part.pos = pos.copy()
-            print(part.pos)
             pos = new_pos
 
     def draw(self):
@@ -44,22 +48,35 @@ class SnakePart:
         self.pos = pos
 
     def draw(self):
-        pygame.draw.rect(self.screen, pygame.Color(0, 200, 0), pygame.Rect(self.pos.x, self.pos.y, 25, 25))
+        pygame.draw.rect(self.screen, pygame.Color(0, 200, 0), pygame.Rect(self.pos.x, self.pos.y, GRID_SIZE, GRID_SIZE))
 
     def move(self, dir: Direction):
         if dir == Direction.LEFT:
-            self.pos.x -= 25
+            self.pos.x -= GRID_SIZE
         elif dir == Direction.RIGHT:
-            self.pos.x += 25
+            self.pos.x += GRID_SIZE
         elif dir == Direction.UP:
-            self.pos.y -= 25
+            self.pos.y -= GRID_SIZE
         elif dir == Direction.DOWN:
-            self.pos.y += 25
+            self.pos.y += GRID_SIZE
 
-player_pos = pygame.Vector2(screen.get_width() / 2, screen.get_height() / 2)
+class Apple:
+    def __init__(self, screen):
+        self.screen = screen
+        self.place()
+
+    def place(self):
+        x, y = random.randrange(int(GRID_SIZE/2), screen.get_width(), GRID_SIZE), random.randrange(int(GRID_SIZE/2), screen.get_height(), GRID_SIZE)
+        self.pos = pygame.Vector2(x, y)
+
+    def draw(self):
+        pygame.draw.circle(self.screen, pygame.Color(200, 0, 100), self.pos, GRID_SIZE/2)
+
+player_pos = pygame.Vector2(window_width / 2, window_height / 2)
 dir = Direction.RIGHT
 
 snake = Snake(screen, player_pos)
+apple = Apple(screen)
 
 while running:
     dt = clock.tick(10)
@@ -87,6 +104,9 @@ while running:
 
     snake.move(dir)
     snake.draw()
+
+    apple.draw()
+
     pygame.display.flip()
 
 pygame.quit()
