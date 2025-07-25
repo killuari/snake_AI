@@ -14,6 +14,7 @@ screen = pygame.display.set_mode((window_width, window_height))
 clock = pygame.time.Clock()
 running = True
 
+font = pygame.font.Font(None, 50)
 
 class Direction(Enum):
     LEFT = (-1, 0)
@@ -34,7 +35,9 @@ class Snake:
     def __init__(self, screen, pos):
         self.screen = screen
         self.head = SnakePart(screen, pos)
-        self.snake_list = [self.head, SnakePart(screen, pos), SnakePart(screen, pos)]
+        self.snake_list = [self.head]
+
+        [self.add_part() for i in range(2)]
 
     def add_part(self):
         self.snake_list.append(SnakePart(self.screen, self.snake_list[-1].pos))
@@ -100,6 +103,7 @@ dir = Direction.RIGHT
 
 snake = Snake(screen, player_pos)
 apple = Apple(screen)
+score = 0
 
 while running:
     dt = clock.tick(10)
@@ -131,8 +135,12 @@ while running:
     if snake.head.pos.x + 15 == apple.pos.x and snake.head.pos.y + 15 == apple.pos.y:
         apple.place()
         snake.add_part()
+        score += 1
 
     apple.draw()
+
+    score_display = font.render(f"Score: {score}", True, pygame.Color(255, 255, 255))
+    screen.blit(score_display, (15, 15))
 
     pygame.display.flip()
 
