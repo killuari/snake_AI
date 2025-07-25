@@ -21,6 +21,15 @@ class Direction(Enum):
     UP = (0, -1)
     DOWN = (0, 1)
 
+    def opposite(self):
+        opposites = {
+            Direction.LEFT: Direction.RIGHT,
+            Direction.RIGHT: Direction.LEFT,
+            Direction.UP: Direction.DOWN,
+            Direction.DOWN: Direction.UP
+        }
+        return opposites[self]
+
 class Snake:
     def __init__(self, screen, pos):
         self.screen = screen
@@ -49,7 +58,7 @@ class SnakePart:
         self.pos = pos
 
     def draw(self):
-        pygame.draw.rect(self.screen, pygame.Color(0, 200, 0), pygame.Rect(self.pos.x, self.pos.y, GRID_SIZE, GRID_SIZE))
+        pygame.draw.rect(self.screen, pygame.Color(80, 220, 80), pygame.Rect(self.pos.x, self.pos.y, GRID_SIZE, GRID_SIZE))
 
     def move(self, dir: Direction):
         if dir == Direction.LEFT:
@@ -61,6 +70,19 @@ class SnakePart:
         elif dir == Direction.DOWN:
             self.pos.y += GRID_SIZE
 
+        if self.pos.x > window_width:
+            self.pos.x = 0
+            dir = dir.opposite()
+        elif self.pos.x < 0:
+            self.pos.x = window_width
+            dir = dir.opposite()
+        elif self.pos.y > window_height:
+            self.pos.y = 0
+            dir = dir.opposite()
+        elif self.pos.y < 0:
+            self.pos.y = window_height
+            dir = dir.opposite()
+
 class Apple:
     def __init__(self, screen):
         self.screen = screen
@@ -71,7 +93,7 @@ class Apple:
         self.pos = pygame.Vector2(x, y)
 
     def draw(self):
-        pygame.draw.circle(self.screen, pygame.Color(200, 0, 100), self.pos, GRID_SIZE/2)
+        pygame.draw.circle(self.screen, pygame.Color(230, 100, 100), self.pos, GRID_SIZE/2)
 
 player_pos = pygame.Vector2(window_width / 2, window_height / 2)
 dir = Direction.RIGHT
@@ -94,13 +116,13 @@ while running:
     screen.fill("black")
 
     keys = pygame.key.get_pressed()
-    if keys[pygame.K_w]:
+    if keys[pygame.K_w] and dir != Direction.DOWN:
         dir = Direction.UP
-    if keys[pygame.K_s]:
+    if keys[pygame.K_s] and dir != Direction.UP:
         dir = Direction.DOWN
-    if keys[pygame.K_a]:
+    if keys[pygame.K_a] and dir != Direction.RIGHT:
         dir = Direction.LEFT
-    if keys[pygame.K_d]:
+    if keys[pygame.K_d] and dir != Direction.LEFT:
         dir = Direction.RIGHT
 
     snake.move(dir)
