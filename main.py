@@ -35,7 +35,7 @@ class Snake:
     def __init__(self, screen, pos):
         self.screen = screen
         self.head = SnakePart(screen, pos)
-        self.snake_list = [self.head]
+        self.snake_list = [self.head, SnakePart(self.screen, pos - pygame.Vector2(GRID_SIZE, 0))]
 
         [self.add_part() for i in range(2)]
 
@@ -50,6 +50,11 @@ class Snake:
             new_pos = part.pos.copy()
             part.pos = pos.copy()
             pos = new_pos
+
+    def detect_collision(self):
+        for part in self.snake_list[1:]:
+            if part.pos == self.head.pos:
+                return True
 
     def draw(self):
         for part in self.snake_list:
@@ -122,15 +127,17 @@ while running:
     keys = pygame.key.get_pressed()
     if keys[pygame.K_w] and dir != Direction.DOWN:
         dir = Direction.UP
-    if keys[pygame.K_s] and dir != Direction.UP:
+    elif keys[pygame.K_s] and dir != Direction.UP:
         dir = Direction.DOWN
-    if keys[pygame.K_a] and dir != Direction.RIGHT:
+    elif keys[pygame.K_a] and dir != Direction.RIGHT:
         dir = Direction.LEFT
-    if keys[pygame.K_d] and dir != Direction.LEFT:
+    elif keys[pygame.K_d] and dir != Direction.LEFT:
         dir = Direction.RIGHT
 
     snake.move(dir)
     snake.draw()
+    if snake.detect_collision():
+        running = False
 
     if snake.head.pos.x + 15 == apple.pos.x and snake.head.pos.y + 15 == apple.pos.y:
         apple.place()
