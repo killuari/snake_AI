@@ -35,15 +35,19 @@ class Direction(Enum):
         return opposites[self]
 
 class Snake:
-    def __init__(self, screen, pos):
-        self.screen = screen
-        self.head = SnakePart(screen, pos)
-        self.snake_list = [self.head, SnakePart(self.screen, pos - pygame.Vector2(GRID_SIZE, 0))]
+    def __init__(self, grid_size, grid_width, grid_height):
+        self.grid_size = grid_size
+        self.grid_width = grid_width
+        self.grid_height = grid_height
+        
+        pos = pygame.Vector2(grid_size*grid_width // 2, grid_size*grid_height // 2)
+        self.head = SnakePart(grid_size, grid_width, grid_height, pos)
+        self.snake_list = [self.head, SnakePart(grid_size, grid_width, grid_height, pos - pygame.Vector2(self.grid_size, 0))]
 
         [self.add_part() for i in range(2)]
 
     def add_part(self):
-        self.snake_list.append(SnakePart(self.screen, self.snake_list[-1].pos))
+        self.snake_list.append(SnakePart(self.grid_size, self.grid_width, self.grid_height, self.snake_list[-1].pos))
 
     def move(self, dir: Direction):
         pos = self.snake_list[0].pos.copy()
@@ -52,6 +56,7 @@ class Snake:
         for part in self.snake_list[1:]:
             new_pos = part.pos.copy()
             part.pos = pos.copy()
+            part.grid_pos = np.array([part.pos.x // self.grid_size, part.pos.y // self.grid_size])
             pos = new_pos
 
     def detect_collision(self):
@@ -59,62 +64,81 @@ class Snake:
             if part.pos == self.head.pos:
                 return True
 
-    def draw(self):
+    def draw(self, screen):
         for part in self.snake_list:
-            part.draw()
+            part.draw(screen)
 
 class SnakePart:
-    def __init__(self, screen, pos):
-        self.screen = screen
-        self.pos = pos
+    def __init__(self, grid_size, grid_width, grid_height, pos: pygame.Vector2):
+        self.grid_size = grid_size
+        self.grid_width = grid_width
+        self.grid_height = grid_height
+        self.window_width = grid_size * grid_width
+        self.window_height = grid_size * grid_height
 
-    def draw(self):
-        pygame.draw.rect(self.screen, pygame.Color(80, 220, 80), pygame.Rect(self.pos.x, self.pos.y, GRID_SIZE, GRID_SIZE))
+        self.pos = pos
+        self.grid_pos = np.array([self.pos.x // self.grid_size, self.pos.y // self.grid_size])
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, pygame.Color(80, 220, 80), pygame.Rect(self.pos.x, self.pos.y, self.grid_size, self.grid_size))
 
     def move(self, dir: Direction):
         if dir == Direction.LEFT:
-            self.pos.x -= GRID_SIZE
+            self.pos.x -= self.grid_size
         elif dir == Direction.RIGHT:
-            self.pos.x += GRID_SIZE
+            self.pos.x += self.grid_size
         elif dir == Direction.UP:
-            self.pos.y -= GRID_SIZE
+            self.pos.y -= self.grid_size
         elif dir == Direction.DOWN:
-            self.pos.y += GRID_SIZE
+            self.pos.y += self.grid_size
 
-        if self.pos.x > window_width:
+        if self.pos.x > self.window_width:
             self.pos.x = 0
             dir = dir.opposite()
         elif self.pos.x < 0:
-            self.pos.x = window_width
+            self.pos.x = self.window_width
             dir = dir.opposite()
-        elif self.pos.y > window_height:
+        elif self.pos.y > self.window_height:
             self.pos.y = 0
             dir = dir.opposite()
         elif self.pos.y < 0:
-            self.pos.y = window_height
+            self.pos.y = self.window_height
             dir = dir.opposite()
 
+        self.grid_pos = np.array([self.pos.x // self.grid_size, self.pos.y // self.grid_size])        
+
 class Apple:
-    def __init__(self, screen):
-        self.screen = screen
+    def __init__(self, grid_size, grid_width, grid_height):
+        self.grid_size = grid_size
+        self.grid_width = grid_width
+        self.grid_height = grid_height
         self.place()
 
     def place(self):
-        x, y = random.randrange(int(GRID_SIZE/2), screen.get_width(), GRID_SIZE), random.randrange(int(GRID_SIZE/2), screen.get_height(), GRID_SIZE)
+        x, y = random.randrange(self.grid_size // 2, self.grid_width * self.grid_size, self.grid_size), random.randrange(self.grid_size // 2, self.grid_height * self.grid_size, self.grid_size)
         self.pos = pygame.Vector2(x, y)
+        self.grid_pos = np.array([x // self.grid_size, y // self.grid_size])
 
-    def draw(self):
-        pygame.draw.circle(self.screen, pygame.Color(230, 100, 100), self.pos, GRID_SIZE/2)
+    def draw(self, screen):
+        pygame.draw.circle(screen, pygame.Color(230, 100, 100), self.pos, self.grid_size/2)
 
-class SnakeGameEnvironment(gym.Env):
-    def __init__(self, grid_size = 30, grid_width = 50, grid_height = 30):
+class GameEnvironment(gym.Env):
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
+
+    def __init__(self, grid_size, grid_width, grid_height, render_mode = None):
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
         self.max_length = grid_width * grid_height
 
-        self.head_location = np.array(-1, -1)
-        self.apple_location = np.array(-1, -1)
+        self.snake = None
+        self.apple = None
+        
+        self.screen = None
+        self.clock = None
+
+        self.head_location = np.array([-1, -1])
+        self.apple_location = np.array([-1, -1])
         self.tail_locations = []
 
         coord_space = gym.spaces.MultiDiscrete([self.grid_width, self.grid_size])
@@ -136,8 +160,11 @@ class SnakeGameEnvironment(gym.Env):
             3: Direction.DOWN
         }
 
+        assert render_mode is None or render_mode in self.metadata["render_modes"]
+        self.render_mode = render_mode
+
     def _get_obs(self):
-        tail_locations = (np.array(-1, -1) for _ in self.max_length - 1)
+        tail_locations = (np.array([-1, -1]) for _ in self.max_length - 1)
         for idx, loc in enumerate(self.tail_locations):
             tail_locations[idx] = loc
 
@@ -145,17 +172,17 @@ class SnakeGameEnvironment(gym.Env):
     
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
-        
 
-player_pos = pygame.Vector2(window_width / 2, window_height / 2)
+        self.snake = Snake()
+        
 dir = Direction.RIGHT
 
-snake = Snake(screen, player_pos)
-apple = Apple(screen)
+snake = Snake(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
+apple = Apple(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
 score = 0
 
 while running:
-    dt = clock.tick(2)
+    dt = clock.tick(10)
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -179,7 +206,7 @@ while running:
         dir = Direction.RIGHT
 
     snake.move(dir)
-    snake.draw()
+    snake.draw(screen)
     if snake.detect_collision():
         running = False
 
@@ -188,7 +215,7 @@ while running:
         snake.add_part()
         score += 1
 
-    apple.draw()
+    apple.draw(screen)
 
     score_display = font.render(f"Score: {score}", True, pygame.Color(255, 255, 255))
     screen.blit(score_display, (15, 15))
