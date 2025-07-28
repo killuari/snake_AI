@@ -34,11 +34,14 @@ class Direction(Enum):
         }
         return opposites[self]
 
-class Snake:
+class SnakeGame:
     def __init__(self, grid_size, grid_width, grid_height):
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
+
+        self.apple = Apple(grid_size, grid_width, grid_height)
+        self.score = 0
         
         pos = pygame.Vector2(grid_size*grid_width // 2, grid_size*grid_height // 2)
         self.head = SnakePart(grid_size, grid_width, grid_height, pos)
@@ -52,7 +55,7 @@ class Snake:
     def add_part(self):
         self.snake_list.append(SnakePart(self.grid_size, self.grid_width, self.grid_height, self.snake_list[-1].pos))
 
-    def move(self, dir: Direction):
+    def move_snake(self, dir: Direction):
         pos = self.snake_list[0].pos.copy()
         self.snake_list[0].move(dir)
     
@@ -66,10 +69,20 @@ class Snake:
         for part in self.snake_list[1:]:
             if part.pos == self.head.pos:
                 return True
+        return False
+            
+    def eat_apple(self):
+        if np.array_equal(self.head.grid_pos, self.apple.grid_pos):
+            self.apple.place()
+            self.add_part()
+            self.score += 1
+            return True
+        return False
 
     def draw(self, screen):
         for part in self.snake_list:
             part.draw(screen)
+        self.apple.draw(screen)
 
 class SnakePart:
     def __init__(self, grid_size, grid_width, grid_height, pos: pygame.Vector2):
@@ -135,8 +148,7 @@ class GameEnvironment(gym.Env):
         self.max_length = grid_width * grid_height
 
         self.snake = None
-        self.apple = None
-        
+
         self.screen = None
         self.clock = None
 
@@ -173,28 +185,46 @@ class GameEnvironment(gym.Env):
 
         return {"head": self.head_location, "apple": self.apple_location, "tail": tail_locations}
     
+    def _get_info(self):
+        return {
+            "snake_length": len(self.snake.snake_list)
+        }
+    
+    def update_locations(self):
+        self.head_location = self.snake.head.grid_pos
+        self.apple_location = self.snake.apple.grid_pos
+        self.tail_locations = self.snake.get_tail_locations()
+    
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
 
-        self.snake = Snake(self.grid_size, self.grid_width, self.grid_height)
-        self.apple = Apple(self.grid_size, self.grid_width, self.grid_height)
+        self.snake = SnakeGame(self.grid_size, self.grid_width, self.grid_height)
 
-        self.head_location = self.snake.head.grid_pos
-        self.apple_location = self.apple.grid_pos
-        self.tail_locations = self.snake.get_tail_locations()
+        self.update_locations()
 
         observation = self._get_obs()
+        info = self._get_info()
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return observation
-        
-dir = Direction.RIGHT
+        return observation, info
+    
+    def step(self, action):
+        dir = self.action_to_direction[action]
 
-snake = Snake(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
-apple = Apple(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
-score = 0
+        self.snake.move(dir)
+        if self.snake.detect_collision():
+            terminated = True
+            reward = -1
+
+        apple_eaten = self.snake.eat_apple()
+        
+        if apple_eaten:
+            reward = 1
+
+dir = Direction.RIGHT
+snakeGame = SnakeGame(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
 
 while running:
     dt = clock.tick(10)
@@ -205,8 +235,6 @@ while running:
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 running = False
-            if event.key == pygame.K_x:
-                snake.add_part()
 
     screen.fill("black")
 
@@ -220,19 +248,16 @@ while running:
     elif keys[pygame.K_d] and dir != Direction.LEFT:
         dir = Direction.RIGHT
 
-    snake.move(dir)
-    snake.draw(screen)
-    if snake.detect_collision():
+    snakeGame.move_snake(dir)
+
+    snakeGame.eat_apple()
+
+    if snakeGame.detect_collision():
         running = False
+    
+    snakeGame.draw(screen)
 
-    if snake.head.pos.x + 15 == apple.pos.x and snake.head.pos.y + 15 == apple.pos.y:
-        apple.place()
-        snake.add_part()
-        score += 1
-
-    apple.draw(screen)
-
-    score_display = font.render(f"Score: {score}", True, pygame.Color(255, 255, 255))
+    score_display = font.render(f"Score: {snakeGame.score}", True, pygame.Color(255, 255, 255))
     screen.blit(score_display, (15, 15))
 
     pygame.display.flip()
