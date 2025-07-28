@@ -11,13 +11,7 @@ GRID_HEIGHT = 30
 window_width = GRID_WIDTH * GRID_SIZE
 window_height = GRID_HEIGHT * GRID_SIZE
 
-# pygame setup
-pygame.init()
-screen = pygame.display.set_mode((window_width, window_height))
-clock = pygame.time.Clock()
-running = True
-
-font = pygame.font.Font(None, 50)
+font = pygame.font.Font(None, 45)
 
 class Direction(Enum):
     LEFT = (-1, 0)
@@ -138,7 +132,7 @@ class Apple:
     def draw(self, screen):
         pygame.draw.circle(screen, pygame.Color(230, 100, 100), self.pos, self.grid_size/2)
 
-class GameEnvironment(gym.Env):
+class SnakeGameEnvironment(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
     def __init__(self, grid_size, grid_width, grid_height, render_mode = None):
@@ -156,7 +150,7 @@ class GameEnvironment(gym.Env):
         self.apple_location = np.array([-1, -1])
         self.tail_locations = []
 
-        coord_space = gym.spaces.MultiDiscrete([self.grid_width, self.grid_size])
+        coord_space = gym.spaces.MultiDiscrete([self.grid_width, self.grid_height])
 
         self.observation_space = gym.spaces.Dict(
             {
@@ -179,11 +173,17 @@ class GameEnvironment(gym.Env):
         self.render_mode = render_mode
 
     def _get_obs(self):
-        tail_locations = (np.array([-1, -1]) for _ in self.max_length - 1)
-        for idx, loc in enumerate(self.tail_locations):
-            tail_locations[idx] = loc
+        tail_locations = np.full((self.max_length - 1, 2), -1, dtype=np.int32)
 
-        return {"head": self.head_location, "apple": self.apple_location, "tail": tail_locations}
+        for idx, loc in enumerate(self.tail_locations):
+            if idx < len(tail_locations):
+                tail_locations[idx] = loc
+
+        return {
+            "head": self.head_location, 
+            "apple": self.apple_location, 
+            "tail": tail_locations
+        }
     
     def _get_info(self):
         return {
@@ -213,6 +213,9 @@ class GameEnvironment(gym.Env):
     def step(self, action):
         dir = self.action_to_direction[action]
 
+        reward = 0
+        terminated = False
+
         self.snakeGame.move_snake(dir)
         if self.snakeGame.detect_collision():
             terminated = True
@@ -232,44 +235,81 @@ class GameEnvironment(gym.Env):
             self._render_frame()
 
         return observation, reward, terminated, False, info
-
-dir = Direction.RIGHT
-snakeGame = SnakeGame(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
-
-while running:
-    dt = clock.tick(10)
-
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                running = False
-
-    screen.fill("black")
-
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_w] and dir != Direction.DOWN:
-        dir = Direction.UP
-    elif keys[pygame.K_s] and dir != Direction.UP:
-        dir = Direction.DOWN
-    elif keys[pygame.K_a] and dir != Direction.RIGHT:
-        dir = Direction.LEFT
-    elif keys[pygame.K_d] and dir != Direction.LEFT:
-        dir = Direction.RIGHT
-
-    snakeGame.move_snake(dir)
-
-    snakeGame.eat_apple()
-
-    if snakeGame.detect_collision():
-        running = False
     
-    snakeGame.draw(screen)
+    def render(self):
+        if self.render_mode == "rgb_array":
+            return self._render_frame()
+        
+    def _render_frame(self):
+        if self.screen is None and self.render_mode == "human":
+            pygame.init()
+            self.screen = pygame.display.set_mode((self.grid_size * self.grid_width, self.grid_size * self.grid_height))
+            
+        if self.clock is None and self.render_mode == "human":
+            self.clock = pygame.time.Clock()
 
-    score_display = font.render(f"Score: {snakeGame.score}", True, pygame.Color(255, 255, 255))
-    screen.blit(score_display, (15, 15))
+        canvas = pygame.Surface(((self.grid_size * self.grid_width, self.grid_size * self.grid_height)))
+        canvas.fill("black")
 
-    pygame.display.flip()
+        self.snakeGame.draw(canvas)
+        score_display = font.render(f"Score: {self.snakeGame.score}", True, pygame.Color(255, 255, 255))
+        canvas.blit(score_display, (15, 15))
 
-pygame.quit()
+        if self.render_mode == "human":
+            self.screen.blit(canvas)
+            pygame.event.pump()
+            pygame.display.flip()
+
+            self.clock.tick(self.metadata["render_fps"])
+        else:
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
+            )
+
+    def close(self):
+        if self.screen is not None:
+            pygame.display.quit()
+            pygame.quit()
+
+# dir = Direction.RIGHT
+# snakeGame = SnakeGame(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
+
+# running = True
+
+# while running:
+#     dt = clock.tick(10)
+
+#     for event in pygame.event.get():
+#         if event.type == pygame.QUIT:
+#             running = False
+#         elif event.type == pygame.KEYDOWN:
+#             if event.key == pygame.K_ESCAPE:
+#                 running = False
+
+#     screen.fill("black")
+
+#     keys = pygame.key.get_pressed()
+#     if keys[pygame.K_w] and dir != Direction.DOWN:
+#         dir = Direction.UP
+#     elif keys[pygame.K_s] and dir != Direction.UP:
+#         dir = Direction.DOWN
+#     elif keys[pygame.K_a] and dir != Direction.RIGHT:
+#         dir = Direction.LEFT
+#     elif keys[pygame.K_d] and dir != Direction.LEFT:
+#         dir = Direction.RIGHT
+
+#     snakeGame.move_snake(dir)
+
+#     snakeGame.eat_apple()
+
+#     if snakeGame.detect_collision():
+#         running = False
+    
+#     snakeGame.draw(screen)
+
+#     score_display = font.render(f"Score: {snakeGame.score}", True, pygame.Color(255, 255, 255))
+#     screen.blit(score_display, (15, 15))
+
+#     pygame.display.flip()
+
+# pygame.quit()
