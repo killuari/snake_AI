@@ -46,6 +46,9 @@ class Snake:
 
         [self.add_part() for i in range(2)]
 
+    def get_tail_locations(self):
+        return [part.grid_pos for part in self.snake_list[1:]]
+
     def add_part(self):
         self.snake_list.append(SnakePart(self.grid_size, self.grid_width, self.grid_height, self.snake_list[-1].pos))
 
@@ -173,7 +176,19 @@ class GameEnvironment(gym.Env):
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
 
-        self.snake = Snake()
+        self.snake = Snake(self.grid_size, self.grid_width, self.grid_height)
+        self.apple = Apple(self.grid_size, self.grid_width, self.grid_height)
+
+        self.head_location = self.snake.head.grid_pos
+        self.apple_location = self.apple.grid_pos
+        self.tail_locations = self.snake.get_tail_locations()
+
+        observation = self._get_obs()
+
+        if self.render_mode == "human":
+            self._render_frame()
+
+        return observation
         
 dir = Direction.RIGHT
 
