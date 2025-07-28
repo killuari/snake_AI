@@ -1,5 +1,8 @@
 import pygame, random
+import gymnasium as gym
+import numpy as np
 from enum import Enum
+from typing import Optional
 
 GRID_SIZE = 30
 GRID_WIDTH = 50
@@ -103,6 +106,47 @@ class Apple:
     def draw(self):
         pygame.draw.circle(self.screen, pygame.Color(230, 100, 100), self.pos, GRID_SIZE/2)
 
+class SnakeGameEnvironment(gym.Env):
+    def __init__(self, grid_size = 30, grid_width = 50, grid_height = 30):
+        self.grid_size = grid_size
+        self.grid_width = grid_width
+        self.grid_height = grid_height
+        self.max_length = grid_width * grid_height
+
+        self.head_location = np.array(-1, -1)
+        self.apple_location = np.array(-1, -1)
+        self.tail_locations = []
+
+        coord_space = gym.spaces.MultiDiscrete([self.grid_width, self.grid_size])
+
+        self.observation_space = gym.spaces.Dict(
+            {
+                "head": coord_space,
+                "apple": coord_space,
+                "tail": gym.spaces.Tuple(coord_space for _ in range(self.max_length - 1))
+            }
+        )
+
+        self.action_space = gym.spaces.Discrete(4)
+
+        self.action_to_direction = {
+            0: Direction.RIGHT,
+            1: Direction.LEFT,
+            2: Direction.UP,
+            3: Direction.DOWN
+        }
+
+    def _get_obs(self):
+        tail_locations = (np.array(-1, -1) for _ in self.max_length - 1)
+        for idx, loc in enumerate(self.tail_locations):
+            tail_locations[idx] = loc
+
+        return {"head": self.head_location, "apple": self.apple_location, "tail": tail_locations}
+    
+    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+        super().reset(seed=seed)
+        
+
 player_pos = pygame.Vector2(window_width / 2, window_height / 2)
 dir = Direction.RIGHT
 
@@ -111,7 +155,7 @@ apple = Apple(screen)
 score = 0
 
 while running:
-    dt = clock.tick(10)
+    dt = clock.tick(2)
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
