@@ -147,7 +147,7 @@ class GameEnvironment(gym.Env):
         self.grid_height = grid_height
         self.max_length = grid_width * grid_height
 
-        self.snake = None
+        self.snakeGame = None
 
         self.screen = None
         self.clock = None
@@ -187,18 +187,18 @@ class GameEnvironment(gym.Env):
     
     def _get_info(self):
         return {
-            "snake_length": len(self.snake.snake_list)
+            "snake_length": len(self.snakeGame.snake_list)
         }
     
     def update_locations(self):
-        self.head_location = self.snake.head.grid_pos
-        self.apple_location = self.snake.apple.grid_pos
-        self.tail_locations = self.snake.get_tail_locations()
+        self.head_location = self.snakeGame.head.grid_pos
+        self.apple_location = self.snakeGame.apple.grid_pos
+        self.tail_locations = self.snakeGame.get_tail_locations()
     
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
 
-        self.snake = SnakeGame(self.grid_size, self.grid_width, self.grid_height)
+        self.snakeGame = SnakeGame(self.grid_size, self.grid_width, self.grid_height)
 
         self.update_locations()
 
@@ -213,15 +213,25 @@ class GameEnvironment(gym.Env):
     def step(self, action):
         dir = self.action_to_direction[action]
 
-        self.snake.move(dir)
-        if self.snake.detect_collision():
+        self.snakeGame.move_snake(dir)
+        if self.snakeGame.detect_collision():
             terminated = True
             reward = -1
 
-        apple_eaten = self.snake.eat_apple()
+        apple_eaten = self.snakeGame.eat_apple()
         
         if apple_eaten:
             reward = 1
+
+        self.update_locations()
+
+        observation = self._get_obs()
+        info = self._get_info()
+
+        if self.render_mode == "human":
+            self._render_frame()
+
+        return observation, reward, terminated, False, info
 
 dir = Direction.RIGHT
 snakeGame = SnakeGame(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
