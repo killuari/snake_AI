@@ -22,8 +22,14 @@ class SnakeGameEnvironment(gym.Env):
         self.head_location = np.array([-1, -1])
         self.apple_location = np.array([-1, -1])
         self.tail_locations = []
+        self.dir = None
 
-        coord_space = gym.spaces.MultiDiscrete([self.grid_width, self.grid_height])
+        coord_space = gym.spaces.Box(
+            low=-1,
+            high=max(self.grid_width, self.grid_height),
+            shape=(2,),
+            dtype=np.int32
+        )
 
         self.observation_space = gym.spaces.Dict(
             {
@@ -72,6 +78,7 @@ class SnakeGameEnvironment(gym.Env):
         super().reset(seed=seed)
 
         self.snakeGame = SnakeGame(self.grid_size, self.grid_width, self.grid_height)
+        self.dir = Direction.RIGHT
 
         self.update_locations()
 
@@ -84,12 +91,14 @@ class SnakeGameEnvironment(gym.Env):
         return observation, info
     
     def step(self, action):
-        dir = self.action_to_direction[action]
+        action = action.item()
+        if self.action_to_direction[action] != self.dir.opposite():
+            self.dir = self.action_to_direction[action]
 
         reward = 0
         terminated = False
 
-        self.snakeGame.move_snake(dir)
+        self.snakeGame.move_snake(self.dir)
         if self.snakeGame.detect_collision():
             terminated = True
             reward = -1
@@ -132,7 +141,7 @@ class SnakeGameEnvironment(gym.Env):
         canvas.blit(score_display, (15, 15))
 
         if self.render_mode == "human":
-            self.screen.blit(canvas)
+            self.screen.blit(canvas, (0, 0))
             pygame.event.pump()
             pygame.display.flip()
 
@@ -146,3 +155,54 @@ class SnakeGameEnvironment(gym.Env):
         if self.screen is not None:
             pygame.display.quit()
             pygame.quit()
+
+class FlattenDictObservationWrapper(gym.ObservationWrapper):
+    """
+    Wrapper der verschachtelte Dict Observations zu flachen Dict macht
+    Konvertiert: {"head": [x,y], "apple": [x,y], "tail": ([x1,y1], [x2,y2], ...)}
+    Zu: {"head": [x,y], "apple": [x,y], "tail_0": [x1,y1], "tail_1": [x2,y2], ...}
+    """
+    
+    def __init__(self, env):
+        super().__init__(env)
+        
+        # Originalen observation space analysieren
+        original_space = env.observation_space
+        
+        # Neuen flachen Dict space erstellen
+        new_spaces = {}
+        
+        # Head und Apple space beibehalten (sind schon flach)
+        new_spaces["head"] = original_space["head"]
+        new_spaces["apple"] = original_space["apple"]
+        
+        # Tail Tuple zu einzelnen Keys machen
+        tail_tuple_space = original_space["tail"]
+        max_tail_length = len(tail_tuple_space.spaces)
+        
+        for i in range(max_tail_length):
+            new_spaces[f"tail_{i}"] = tail_tuple_space.spaces[i]
+        
+        self.observation_space = gym.spaces.Dict(new_spaces)
+        self.max_tail_length = max_tail_length
+    
+    def observation(self, obs):
+        """
+        Konvertiert verschachtelte Observation zu flacher Dict
+        """
+        flattened_obs = {}
+        
+        # Head und Apple direkt kopieren
+        flattened_obs["head"] = obs["head"]
+        flattened_obs["apple"] = obs["apple"]
+        
+        # Tail Tuple zu einzelnen Keys
+        tail_tuple = obs["tail"]
+        for i in range(self.max_tail_length):
+            if i < len(tail_tuple):
+                flattened_obs[f"tail_{i}"] = tail_tuple[i]
+            else:
+                # Fallback falls weniger tail parts vorhanden
+                flattened_obs[f"tail_{i}"] = np.array([-1, -1])
+        
+        return flattened_obs
