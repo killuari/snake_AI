@@ -6,7 +6,7 @@ from typing import Optional
 from snake_game import SnakeGame, Direction
 
 class SnakeGameEnvironment(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 25}
 
     def __init__(self, grid_size, grid_width, grid_height, render_mode = None):
         self.grid_size = grid_size
@@ -98,15 +98,18 @@ class SnakeGameEnvironment(gym.Env):
         reward = 0
         terminated = False
 
-        self.snakeGame.move_snake(self.dir)
-        if self.snakeGame.detect_collision():
+        alive = self.snakeGame.move_snake(self.dir)
+        if self.snakeGame.detect_collision() or not alive:
             terminated = True
-            reward = -1
+            reward = -10
 
         apple_eaten = self.snakeGame.eat_apple()
         
         if apple_eaten:
-            reward = 1
+            reward = 10
+        
+        if not apple_eaten and not terminated:
+            reward = -0.1
 
         self.update_locations()
 

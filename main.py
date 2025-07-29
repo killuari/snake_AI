@@ -3,17 +3,17 @@ from stable_baselines3 import PPO
 import os
 
 GRID_SIZE = 30
-GRID_WIDTH = 50
-GRID_HEIGHT = 30
+GRID_WIDTH = 30
+GRID_HEIGHT = 20
 
 PPO_PATH = os.path.join("Saved Models", "PPO")
 
-def train_model():
+def train_model(timesteps=20000):
     base_env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, "rgb_array")
     env = FlattenDictObservationWrapper(base_env)
 
-    model = PPO("MultiInputPolicy", env, verbose=1)
-    model.learn(total_timesteps=20000)
+    model = PPO("MultiInputPolicy", env, device='cpu', verbose=1)
+    model.learn(total_timesteps=timesteps)
 
     model.save(PPO_PATH)
 

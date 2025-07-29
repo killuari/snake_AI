@@ -43,14 +43,16 @@ class SnakeGame:
         self.snake_list.append(SnakePart(self.grid_size, self.grid_width, self.grid_height, self.snake_list[-1].pos))
 
     def move_snake(self, dir: Direction):
-        pos = self.snake_list[0].pos.copy()
-        self.snake_list[0].move(dir)
+        pos = self.head.pos.copy()
+        alive = self.head.move(dir)
     
         for part in self.snake_list[1:]:
             new_pos = part.pos.copy()
             part.pos = pos.copy()
             part.grid_pos = np.array([part.pos.x // self.grid_size, part.pos.y // self.grid_size])
             pos = new_pos
+
+        return alive
 
     def detect_collision(self):
         for part in self.snake_list[1:]:
@@ -95,20 +97,11 @@ class SnakePart:
         elif dir == Direction.DOWN:
             self.pos.y += self.grid_size
 
-        if self.pos.x > self.window_width:
-            self.pos.x = 0
-            dir = dir.opposite()
-        elif self.pos.x < 0:
-            self.pos.x = self.window_width
-            dir = dir.opposite()
-        elif self.pos.y > self.window_height:
-            self.pos.y = 0
-            dir = dir.opposite()
-        elif self.pos.y < 0:
-            self.pos.y = self.window_height
-            dir = dir.opposite()
+        self.grid_pos = np.array([self.pos.x // self.grid_size, self.pos.y // self.grid_size])    
 
-        self.grid_pos = np.array([self.pos.x // self.grid_size, self.pos.y // self.grid_size])        
+        if self.pos.x >= self.window_width or self.pos.x < 0 or self.pos.y >= self.window_height or self.pos.y < 0:
+            return False
+        return True
 
 class Apple:
     def __init__(self, grid_size, grid_width, grid_height):
@@ -157,11 +150,11 @@ if __name__ == "__main__":
         elif keys[pygame.K_d] and dir != Direction.LEFT:
             dir = Direction.RIGHT
 
-        snakeGame.move_snake(dir)
+        alive = snakeGame.move_snake(dir)
 
         snakeGame.eat_apple()
 
-        if snakeGame.detect_collision():
+        if snakeGame.detect_collision() or not alive:
             running = False
         
         snakeGame.draw(screen)
