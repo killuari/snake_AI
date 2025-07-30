@@ -1,6 +1,7 @@
-from snake_game_environment import SnakeGameEnvironment, FlattenDictObservationWrapper
+from snake_game_environment import SnakeGameEnvironment
 from stable_baselines3 import PPO, DQN
 import os
+import numpy as np
 
 GRID_SIZE = 30
 GRID_WIDTH = 30
@@ -10,15 +11,21 @@ PPO_PATH = os.path.join("Saved Models", "PPO")
 DQN_PATH = os.path.join("Saved Models", "DQN")
 
 def train_model(model_name="DQN", timesteps=20000, new=True):
-    base_env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, "rgb_array")
-    env = FlattenDictObservationWrapper(base_env)
+    env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, "rgb_array")
 
     if model_name == "DQN":
         path = DQN_PATH
         if not new:
             model = DQN.load(path, env, device='cpu', verbose=1)
         else:
-            model = DQN("MultiInputPolicy", env, device='cpu', verbose=1)
+            model = DQN(
+                "MultiInputPolicy",
+                env,
+                buffer_size=200_000,
+                exploration_fraction=0.5,
+                target_update_interval=10_000,
+                device='cpu',
+                verbose=1)
     else:
         path = PPO_PATH
         if not new:
@@ -33,8 +40,7 @@ def train_model(model_name="DQN", timesteps=20000, new=True):
     return model
 
 def test_model(model_name="DQN"):
-    base_env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, "human")
-    env = FlattenDictObservationWrapper(base_env)
+    env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, "human")
 
     if model_name == "DQN":
         model = DQN.load(DQN_PATH, env)
@@ -50,6 +56,28 @@ def test_model(model_name="DQN"):
         obs, reward, done, _, info = env.step(action)
         score += reward
 
+def test_environment():
+    env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, "human")
+
+    obs, info = env.reset()
+    done = False
+    score = 0
+
+    while not done:
+        action = input("action: ")
+        if action == "d":
+            action = np.array(0)
+        elif action == "s":
+            action = np.array(1)
+        elif action == "a":
+            action = np.array(2)
+        elif action == "w":
+            action = np.array(3)
+        obs, reward, done, _, info = env.step(action)
+        score += reward
+        print(obs)
 
 if __name__ == "__main__":
-    train_model(model_name="DQN", timesteps=500000)
+    test_model("PPO")
+    #train_model("PPO", 5000000, new=False)
+    #train_model("DQN", 5000000, new=False)

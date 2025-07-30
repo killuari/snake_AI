@@ -12,6 +12,10 @@ class Direction(Enum):
     UP = (0, -1)
     DOWN = (0, 1)
 
+    @property
+    def array(self):
+        return np.array(self.value)
+
     def opposite(self):
         opposites = {
             Direction.LEFT: Direction.RIGHT,
@@ -20,6 +24,24 @@ class Direction(Enum):
             Direction.DOWN: Direction.UP
         }
         return opposites[self]
+    
+    def left(self):
+        lefts = {
+            Direction.LEFT: Direction.DOWN,
+            Direction.RIGHT: Direction.UP,
+            Direction.UP: Direction.LEFT,
+            Direction.DOWN: Direction.RIGHT
+        }
+        return lefts[self]
+    
+    def right(self):
+        rights = {
+            Direction.LEFT: Direction.UP,
+            Direction.RIGHT: Direction.DOWN,
+            Direction.UP: Direction.RIGHT,
+            Direction.DOWN: Direction.LEFT
+        }
+        return rights[self]
 
 class SnakeGame:
     def __init__(self, grid_size, grid_width, grid_height):

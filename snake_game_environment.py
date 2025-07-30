@@ -24,18 +24,14 @@ class SnakeGameEnvironment(gym.Env):
         self.tail_locations = []
         self.dir = None
 
-        coord_space = gym.spaces.Box(
-            low=-1,
-            high=max(self.grid_width, self.grid_height),
-            shape=(2,),
-            dtype=np.int32
-        )
+        grid_space = gym.spaces.Discrete(4)
 
         self.observation_space = gym.spaces.Dict(
             {
-                "head": coord_space,
-                "apple": coord_space,
-                "tail": gym.spaces.Tuple(coord_space for _ in range(self.max_length - 1))
+                "up": grid_space,
+                "down": grid_space,
+                "left": grid_space,
+                "right": grid_space
             }
         )
 
@@ -43,25 +39,37 @@ class SnakeGameEnvironment(gym.Env):
 
         self.action_to_direction = {
             0: Direction.RIGHT,
-            1: Direction.LEFT,
-            2: Direction.UP,
-            3: Direction.DOWN
+            1: Direction.DOWN,
+            2: Direction.LEFT,
+            3: Direction.UP
         }
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
     def _get_obs(self):
-        tail_locations = np.full((self.max_length - 1, 2), -1, dtype=np.int32)
+        locations = {
+            "up": self.head_location + Direction.UP.array,
+            "down": self.head_location + Direction.DOWN.array,
+            "left": self.head_location + Direction.LEFT.array,
+            "right": self.head_location + Direction.RIGHT.array
+        }
 
-        for idx, loc in enumerate(self.tail_locations):
-            if idx < len(tail_locations):
-                tail_locations[idx] = loc
+        for loc in locations.keys():
+            if locations[loc][0] < 0 or locations[loc][0] >= self.grid_width or locations[loc][1] < 0 or locations[loc][1] >= self.grid_height:
+                locations[loc] = 3
+            elif np.array_equal(locations[loc], self.apple_location):
+                locations[loc] = 2
+            elif any(np.array_equal(locations[loc], tail_part) for tail_part in self.tail_locations):
+                locations[loc] = 1
+            else:
+                locations[loc] = 0
 
         return {
-            "head": self.head_location, 
-            "apple": self.apple_location, 
-            "tail": tail_locations
+            "up": locations["up"],
+            "down": locations["down"], 
+            "left": locations["left"], 
+            "right": locations["right"]
         }
     
     def _get_info(self):
@@ -99,17 +107,17 @@ class SnakeGameEnvironment(gym.Env):
         terminated = False
 
         alive = self.snakeGame.move_snake(self.dir)
-        if self.snakeGame.detect_collision() or not alive:
-            terminated = True
-            reward = -100
 
         apple_eaten = self.snakeGame.eat_apple()
         
         if apple_eaten:
-            reward = 50
-        
-        #if not apple_eaten and not terminated:
-        #    reward = -0.1
+            reward = 10
+        # else:
+        #     reward = 0.1
+
+        if self.snakeGame.detect_collision() or not alive:
+            terminated = True
+            reward = -10
 
         self.update_locations()
 
@@ -159,53 +167,53 @@ class SnakeGameEnvironment(gym.Env):
             pygame.display.quit()
             pygame.quit()
 
-class FlattenDictObservationWrapper(gym.ObservationWrapper):
-    """
-    Wrapper der verschachtelte Dict Observations zu flachen Dict macht
-    Konvertiert: {"head": [x,y], "apple": [x,y], "tail": ([x1,y1], [x2,y2], ...)}
-    Zu: {"head": [x,y], "apple": [x,y], "tail_0": [x1,y1], "tail_1": [x2,y2], ...}
-    """
+# class FlattenDictObservationWrapper(gym.ObservationWrapper):
+#     """
+#     Wrapper der verschachtelte Dict Observations zu flachen Dict macht
+#     Konvertiert: {"head": [x,y], "apple": [x,y], "tail": ([x1,y1], [x2,y2], ...)}
+#     Zu: {"head": [x,y], "apple": [x,y], "tail_0": [x1,y1], "tail_1": [x2,y2], ...}
+#     """
     
-    def __init__(self, env):
-        super().__init__(env)
+#     def __init__(self, env):
+#         super().__init__(env)
         
-        # Originalen observation space analysieren
-        original_space = env.observation_space
+#         # Originalen observation space analysieren
+#         original_space = env.observation_space
         
-        # Neuen flachen Dict space erstellen
-        new_spaces = {}
+#         # Neuen flachen Dict space erstellen
+#         new_spaces = {}
         
-        # Head und Apple space beibehalten (sind schon flach)
-        new_spaces["head"] = original_space["head"]
-        new_spaces["apple"] = original_space["apple"]
+#         # Head und Apple space beibehalten (sind schon flach)
+#         new_spaces["head"] = original_space["head"]
+#         new_spaces["apple"] = original_space["apple"]
         
-        # Tail Tuple zu einzelnen Keys machen
-        tail_tuple_space = original_space["tail"]
-        max_tail_length = len(tail_tuple_space.spaces)
+#         # Tail Tuple zu einzelnen Keys machen
+#         tail_tuple_space = original_space["tail"]
+#         max_tail_length = len(tail_tuple_space.spaces)
         
-        for i in range(max_tail_length):
-            new_spaces[f"tail_{i}"] = tail_tuple_space.spaces[i]
+#         for i in range(max_tail_length):
+#             new_spaces[f"tail_{i}"] = tail_tuple_space.spaces[i]
         
-        self.observation_space = gym.spaces.Dict(new_spaces)
-        self.max_tail_length = max_tail_length
+#         self.observation_space = gym.spaces.Dict(new_spaces)
+#         self.max_tail_length = max_tail_length
     
-    def observation(self, obs):
-        """
-        Konvertiert verschachtelte Observation zu flacher Dict
-        """
-        flattened_obs = {}
+#     def observation(self, obs):
+#         """
+#         Konvertiert verschachtelte Observation zu flacher Dict
+#         """
+#         flattened_obs = {}
         
-        # Head und Apple direkt kopieren
-        flattened_obs["head"] = obs["head"]
-        flattened_obs["apple"] = obs["apple"]
+#         # Head und Apple direkt kopieren
+#         flattened_obs["head"] = obs["head"]
+#         flattened_obs["apple"] = obs["apple"]
         
-        # Tail Tuple zu einzelnen Keys
-        tail_tuple = obs["tail"]
-        for i in range(self.max_tail_length):
-            if i < len(tail_tuple):
-                flattened_obs[f"tail_{i}"] = tail_tuple[i]
-            else:
-                # Fallback falls weniger tail parts vorhanden
-                flattened_obs[f"tail_{i}"] = np.array([-1, -1])
+#         # Tail Tuple zu einzelnen Keys
+#         tail_tuple = obs["tail"]
+#         for i in range(self.max_tail_length):
+#             if i < len(tail_tuple):
+#                 flattened_obs[f"tail_{i}"] = tail_tuple[i]
+#             else:
+#                 # Fallback falls weniger tail parts vorhanden
+#                 flattened_obs[f"tail_{i}"] = np.array([-1, -1])
         
-        return flattened_obs
+#         return flattened_obs
