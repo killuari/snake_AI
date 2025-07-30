@@ -2,6 +2,7 @@ import pygame
 import gymnasium as gym
 import numpy as np
 from typing import Optional
+from stable_baselines3.common.monitor import Monitor
 
 from snake_game import SnakeGame, Direction
 
@@ -112,8 +113,8 @@ class SnakeGameEnvironment(gym.Env):
         
         if apple_eaten:
             reward = 10
-        # else:
-        #     reward = 0.1
+        else:
+            reward = -0.1
 
         if self.snakeGame.detect_collision() or not alive:
             terminated = True
@@ -167,53 +168,9 @@ class SnakeGameEnvironment(gym.Env):
             pygame.display.quit()
             pygame.quit()
 
-# class FlattenDictObservationWrapper(gym.ObservationWrapper):
-#     """
-#     Wrapper der verschachtelte Dict Observations zu flachen Dict macht
-#     Konvertiert: {"head": [x,y], "apple": [x,y], "tail": ([x1,y1], [x2,y2], ...)}
-#     Zu: {"head": [x,y], "apple": [x,y], "tail_0": [x1,y1], "tail_1": [x2,y2], ...}
-#     """
-    
-#     def __init__(self, env):
-#         super().__init__(env)
-        
-#         # Originalen observation space analysieren
-#         original_space = env.observation_space
-        
-#         # Neuen flachen Dict space erstellen
-#         new_spaces = {}
-        
-#         # Head und Apple space beibehalten (sind schon flach)
-#         new_spaces["head"] = original_space["head"]
-#         new_spaces["apple"] = original_space["apple"]
-        
-#         # Tail Tuple zu einzelnen Keys machen
-#         tail_tuple_space = original_space["tail"]
-#         max_tail_length = len(tail_tuple_space.spaces)
-        
-#         for i in range(max_tail_length):
-#             new_spaces[f"tail_{i}"] = tail_tuple_space.spaces[i]
-        
-#         self.observation_space = gym.spaces.Dict(new_spaces)
-#         self.max_tail_length = max_tail_length
-    
-#     def observation(self, obs):
-#         """
-#         Konvertiert verschachtelte Observation zu flacher Dict
-#         """
-#         flattened_obs = {}
-        
-#         # Head und Apple direkt kopieren
-#         flattened_obs["head"] = obs["head"]
-#         flattened_obs["apple"] = obs["apple"]
-        
-#         # Tail Tuple zu einzelnen Keys
-#         tail_tuple = obs["tail"]
-#         for i in range(self.max_tail_length):
-#             if i < len(tail_tuple):
-#                 flattened_obs[f"tail_{i}"] = tail_tuple[i]
-#             else:
-#                 # Fallback falls weniger tail parts vorhanden
-#                 flattened_obs[f"tail_{i}"] = np.array([-1, -1])
-        
-#         return flattened_obs
+def make_snake_env(grid_size, grid_width, grid_height, render_mode = None):
+    def _init():
+        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, render_mode)
+        env = Monitor(env, filename=None)
+        return env
+    return _init
