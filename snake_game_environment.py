@@ -101,15 +101,15 @@ class SnakeGameEnvironment(gym.Env):
         alive = self.snakeGame.move_snake(self.dir)
         if self.snakeGame.detect_collision() or not alive:
             terminated = True
-            reward = -10
+            reward = -100
 
         apple_eaten = self.snakeGame.eat_apple()
         
         if apple_eaten:
-            reward = 10
+            reward = 50
         
-        if not apple_eaten and not terminated:
-            reward = -0.1
+        #if not apple_eaten and not terminated:
+        #    reward = -0.1
 
         self.update_locations()
 
