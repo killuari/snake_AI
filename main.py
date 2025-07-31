@@ -15,19 +15,19 @@ LOG_PATH = os.path.join("Training", "Logs")
 PPO_PATH = os.path.join("Training", "Saved Models", "PPO")
 DQN_PATH = os.path.join("Training", "Saved Models", "DQN")
 
-def train_model(model_name="DQN", timesteps=20000, num_envs=4, new=True):
+def train_model(model_name="DQN", snake_fov_radius=1, timesteps=20000, num_envs=4, new=True):
     train_env = SubprocVecEnv([make_snake_env(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT) for _ in range(num_envs)])
     raw_eval_env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT)
     raw_eval_env = TimeLimit(raw_eval_env, max_episode_steps=5000)
     eval_env = Monitor(raw_eval_env, filename=None)
 
     if model_name == "DQN":
-        path = DQN_PATH
+        path = os.path.join(DQN_PATH, f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
             model = DQN.load(os.path.join(path, "best_model"), train_env, device='cpu', verbose=1)
         else:
             model = DQN(
-                "MultiInputPolicy",
+                "MlpPolicy",
                 train_env,
                 learning_rate=1e-4,
                 buffer_size=2_000_000,
@@ -35,11 +35,11 @@ def train_model(model_name="DQN", timesteps=20000, num_envs=4, new=True):
                 device='cpu',
                 verbose=1)
     else:
-        path = PPO_PATH
+        path = os.path.join(PPO_PATH, f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
             model = PPO.load(os.path.join(path, "best_model"), train_env, device='cpu', verbose=1)
         else:
-            model = PPO("MultiInputPolicy", train_env, device='cpu', verbose=1)
+            model = PPO("MlpPolicy", train_env, device='cpu', verbose=1)
 
     stop_callback = StopTrainingOnRewardThreshold(reward_threshold=100, verbose=1)
 
@@ -59,13 +59,13 @@ def train_model(model_name="DQN", timesteps=20000, num_envs=4, new=True):
     train_env.close()
     eval_env.close()
 
-def test_model(model_name="DQN"):
-    env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, "human")
+def test_model(model_name="DQN", snake_fov_radius=1):
+    env = SnakeGameEnvironment(GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, snake_fov_radius, "human")
 
     if model_name == "DQN":
-        model = DQN.load(os.path.join(DQN_PATH, "best_model"), env)
+        model = DQN.load(os.path.join(DQN_PATH, f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env)
     else:
-        model = PPO.load(os.path.join(PPO_PATH, "best_model"), env)
+        model = PPO.load(os.path.join(PPO_PATH, f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env)
 
     obs, info = env.reset()
     done = False
@@ -98,5 +98,5 @@ def test_environment():
         print(obs)
 
 if __name__ == "__main__":
-    #test_model("DQN")
-    train_model(model_name="PPO", timesteps=1_000_000, num_envs=10)
+    test_model(model_name="PPO", snake_fov_radius=2)
+    #train_model(model_name="PPO", snake_fov_radius=2, timesteps=3_000_000, num_envs=10)

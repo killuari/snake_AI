@@ -9,10 +9,11 @@ from snake_game import SnakeGame, Direction
 class SnakeGameEnvironment(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 25}
 
-    def __init__(self, grid_size, grid_width, grid_height, render_mode = None):
+    def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None):
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
+        self.snake_fov_radius = snake_fov_radius
         self.max_length = grid_width * grid_height
 
         self.snakeGame = None
@@ -25,16 +26,8 @@ class SnakeGameEnvironment(gym.Env):
         self.tail_locations = []
         self.dir = None
 
-        grid_space = gym.spaces.Discrete(4)
-
-        self.observation_space = gym.spaces.Dict(
-            {
-                "up": grid_space,
-                "down": grid_space,
-                "left": grid_space,
-                "right": grid_space
-            }
-        )
+        n_cells = (2*self.snake_fov_radius + 1)**2 - 1
+        self.observation_space = gym.spaces.MultiDiscrete([4] * n_cells)
 
         self.action_space = gym.spaces.Discrete(4)
 
@@ -49,14 +42,18 @@ class SnakeGameEnvironment(gym.Env):
         self.render_mode = render_mode
 
     def _get_obs(self):
-        locations = {
-            "up": self.head_location + Direction.UP.array,
-            "down": self.head_location + Direction.DOWN.array,
-            "left": self.head_location + Direction.LEFT.array,
-            "right": self.head_location + Direction.RIGHT.array
-        }
+        locations = []
+        hx, hy = self.head_location
 
-        for loc in locations.keys():
+        for dy in range(-self.snake_fov_radius, self.snake_fov_radius + 1):
+            for dx in range(-self.snake_fov_radius, self.snake_fov_radius + 1):
+                if dx == 0 and dy == 0:
+                    continue  # Skip head position itself
+                loc = np.array([hx + dx, hy + dy])
+                locations.append(loc)
+            print(locations)
+
+        for loc in range(len(locations)):
             if locations[loc][0] < 0 or locations[loc][0] >= self.grid_width or locations[loc][1] < 0 or locations[loc][1] >= self.grid_height:
                 locations[loc] = 3
             elif np.array_equal(locations[loc], self.apple_location):
@@ -66,12 +63,7 @@ class SnakeGameEnvironment(gym.Env):
             else:
                 locations[loc] = 0
 
-        return {
-            "up": locations["up"],
-            "down": locations["down"], 
-            "left": locations["left"], 
-            "right": locations["right"]
-        }
+        return np.array(locations)
     
     def _get_info(self):
         return {
@@ -168,9 +160,9 @@ class SnakeGameEnvironment(gym.Env):
             pygame.display.quit()
             pygame.quit()
 
-def make_snake_env(grid_size, grid_width, grid_height, render_mode = None):
+def make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None):
     def _init():
-        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, render_mode)
+        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode)
         env = Monitor(env, filename=None)
         return env
     return _init
