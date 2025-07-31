@@ -48,10 +48,9 @@ class SnakeGameEnvironment(gym.Env):
         for dy in range(-self.snake_fov_radius, self.snake_fov_radius + 1):
             for dx in range(-self.snake_fov_radius, self.snake_fov_radius + 1):
                 if dx == 0 and dy == 0:
-                    continue  # Skip head position itself
+                    continue  # Skip head position
                 loc = np.array([hx + dx, hy + dy])
                 locations.append(loc)
-            print(locations)
 
         for loc in range(len(locations)):
             if locations[loc][0] < 0 or locations[loc][0] >= self.grid_width or locations[loc][1] < 0 or locations[loc][1] >= self.grid_height:
@@ -104,13 +103,11 @@ class SnakeGameEnvironment(gym.Env):
         apple_eaten = self.snakeGame.eat_apple()
         
         if apple_eaten:
-            reward = 10
-        else:
-            reward = -0.1
+            reward = 1
 
         if self.snakeGame.detect_collision() or not alive:
             terminated = True
-            reward = -10
+            reward = -1
 
         self.update_locations()
 

@@ -3,8 +3,8 @@ import numpy as np
 from enum import Enum
 
 GRID_SIZE = 30
-GRID_WIDTH = 50
-GRID_HEIGHT = 30
+GRID_WIDTH = 30
+GRID_HEIGHT = 20
 
 class Direction(Enum):
     LEFT = (-1, 0)
@@ -78,17 +78,20 @@ class SnakeGame:
 
     def detect_collision(self):
         for part in self.snake_list[1:]:
-            if part.pos == self.head.pos:
+            if np.array_equal(part.grid_pos, self.head.grid_pos):
                 return True
         return False
             
     def eat_apple(self):
-        if np.array_equal(self.head.grid_pos, self.apple.grid_pos):
+        apple_eaten = False
+
+        while any(np.array_equal(self.apple.grid_pos, part.grid_pos) for part in self.snake_list):
             self.apple.place()
             self.add_part()
             self.score += 1
-            return True
-        return False
+            apple_eaten = True
+
+        return apple_eaten
 
     def draw(self, screen):
         for part in self.snake_list:
