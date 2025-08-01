@@ -3,8 +3,8 @@ import numpy as np
 from enum import Enum
 
 GRID_SIZE = 30
-GRID_WIDTH = 30
-GRID_HEIGHT = 20
+GRID_WIDTH = 50
+GRID_HEIGHT = 30
 
 class Direction(Enum):
     LEFT = (-1, 0)

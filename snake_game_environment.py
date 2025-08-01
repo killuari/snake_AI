@@ -7,7 +7,7 @@ from stable_baselines3.common.monitor import Monitor
 from snake_game import SnakeGame, Direction
 
 class SnakeGameEnvironment(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 25}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
     def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None):
         self.grid_size = grid_size
@@ -79,6 +79,7 @@ class SnakeGameEnvironment(gym.Env):
 
         self.snakeGame = SnakeGame(self.grid_size, self.grid_width, self.grid_height)
         self.dir = Direction.RIGHT
+        self.steps = 0
 
         self.update_locations()
 
@@ -97,6 +98,7 @@ class SnakeGameEnvironment(gym.Env):
 
         reward = 0
         terminated = False
+        self.steps += 1
 
         alive = self.snakeGame.move_snake(self.dir)
 
@@ -104,6 +106,10 @@ class SnakeGameEnvironment(gym.Env):
         
         if apple_eaten:
             reward = 1
+            self.steps = 0
+        elif self.steps >= 500:
+            reward = -0.5
+            terminated = True
 
         if self.snakeGame.detect_collision() or not alive:
             terminated = True

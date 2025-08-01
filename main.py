@@ -8,8 +8,8 @@ import os
 import numpy as np
 
 GRID_SIZE = 30
-GRID_WIDTH = 50
-GRID_HEIGHT = 30
+GRID_WIDTH = 30
+GRID_HEIGHT = 20
 
 LOG_PATH = os.path.join("Training", "Logs")
 PPO_PATH = os.path.join("Training", "Saved Models", "PPO")
@@ -33,7 +33,7 @@ def train_model(model_name="DQN", snake_fov_radius=1, timesteps=20000, num_envs=
                 buffer_size=200_000,
                 learning_starts=50_000,
                 batch_size=64,
-                tau=0.05,
+                tau=0.005,
                 gamma=0.99,
                 train_freq=4,
                 gradient_steps=1,
@@ -58,7 +58,7 @@ def train_model(model_name="DQN", snake_fov_radius=1, timesteps=20000, num_envs=
                 verbose=1
             )
 
-    stop_callback = StopTrainingOnRewardThreshold(reward_threshold=50, verbose=1)
+    stop_callback = StopTrainingOnRewardThreshold(reward_threshold=100, verbose=1)
 
     # EvalCallback mit Stop- und Save-Best-Funktion
     eval_callback = EvalCallback(
@@ -66,12 +66,13 @@ def train_model(model_name="DQN", snake_fov_radius=1, timesteps=20000, num_envs=
         callback_on_new_best=stop_callback,
         best_model_save_path=path,
         eval_freq=20_000,                # alle 20k Steps evaluieren
-        n_eval_episodes=5,
+        n_eval_episodes=10,
         verbose=1,
         deterministic=False
     )
 
     model.learn(total_timesteps=timesteps, callback=eval_callback)
+    model.save(os.path.join(path, "last_model"))
 
     train_env.close()
     eval_env.close()
