@@ -9,11 +9,12 @@ from snake_game import SnakeGame, Direction
 class SnakeGameEnvironment(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None):
+    def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True):
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
         self.snake_fov_radius = snake_fov_radius
+        self.training = training
         self.max_length = grid_width * grid_height
 
         self.snakeGame = None
@@ -104,16 +105,19 @@ class SnakeGameEnvironment(gym.Env):
 
         apple_eaten = self.snakeGame.eat_apple()
         
+        #max_steps = max(500, min(2000, 100*len(self.snakeGame.snake_list)))
+        max_steps = 500
+
         if apple_eaten:
             reward = 1
             self.steps = 0
-        elif self.steps >= 500:
+        elif self.steps >= max_steps and self.training:
             reward = -0.5
             terminated = True
 
         if self.snakeGame.detect_collision() or not alive:
             terminated = True
-            reward = -1
+            reward = -10
 
         self.update_locations()
 
@@ -163,9 +167,9 @@ class SnakeGameEnvironment(gym.Env):
             pygame.display.quit()
             pygame.quit()
 
-def make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None):
+def make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True):
     def _init():
-        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode)
+        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode, training)
         env = Monitor(env, filename=None)
         return env
     return _init
