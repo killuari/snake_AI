@@ -115,9 +115,10 @@ class SnakeGameEnvironment(gym.Env):
             reward = -0.5
             terminated = True
 
-        if self.snakeGame.detect_collision() or not alive:
+        if not alive:
             terminated = True
-            reward = -10
+            # Bestrafung abhängig von aktueller Snake-Länge -(min: 1  max: 20)
+            reward = -min(20, max(1, (len(self.snakeGame.snake_list)-3) * 0.5))
 
         self.update_locations()
 

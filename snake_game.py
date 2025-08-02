@@ -54,9 +54,7 @@ class SnakeGame:
         
         pos = pygame.Vector2(grid_size*grid_width // 2, grid_size*grid_height // 2)
         self.head = SnakePart(grid_size, grid_width, grid_height, pos)
-        self.snake_list = [self.head, SnakePart(grid_size, grid_width, grid_height, pos - pygame.Vector2(self.grid_size, 0))]
-
-        [self.add_part() for i in range(2)]
+        self.snake_list = [self.head, SnakePart(grid_size, grid_width, grid_height, pos - pygame.Vector2(self.grid_size, 0)), SnakePart(grid_size, grid_width, grid_height, pos - 2*pygame.Vector2(self.grid_size, 0))]
 
     def get_tail_locations(self):
         return [part.grid_pos for part in self.snake_list[1:]]
@@ -67,6 +65,9 @@ class SnakeGame:
     def move_snake(self, dir: Direction):
         pos = self.head.pos.copy()
         alive = self.head.move(dir)
+
+        if self.detect_collision():
+            alive = False
     
         for part in self.snake_list[1:]:
             new_pos = part.pos.copy()
@@ -175,12 +176,9 @@ if __name__ == "__main__":
         elif keys[pygame.K_d] and dir != Direction.LEFT:
             dir = Direction.RIGHT
 
-        alive = snakeGame.move_snake(dir)
+        running = snakeGame.move_snake(dir)
 
         snakeGame.eat_apple()
-
-        if snakeGame.detect_collision() or not alive:
-            running = False
         
         snakeGame.draw(screen)
 
