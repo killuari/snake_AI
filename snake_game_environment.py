@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
+
 import pygame
 import gymnasium as gym
 import numpy as np
@@ -5,6 +8,7 @@ from typing import Optional
 from stable_baselines3.common.monitor import Monitor
 
 from snake_game import SnakeGame, Direction
+
 
 class SnakeGameEnvironment(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
@@ -105,7 +109,7 @@ class SnakeGameEnvironment(gym.Env):
 
         apple_eaten = self.snakeGame.eat_apple()
         
-        #max_steps = max(500, min(2000, 100*len(self.snakeGame.snake_list)))
+        snake_length = len(self.snakeGame.snake_list)
         max_steps = 500
 
         if apple_eaten:
@@ -118,7 +122,7 @@ class SnakeGameEnvironment(gym.Env):
         if not alive:
             terminated = True
             # Bestrafung abhängig von aktueller Snake-Länge -(min: 1  max: 20)
-            reward = -min(20, max(1, (len(self.snakeGame.snake_list)-3) * 0.5))
+            reward = -min(20, max(1, (snake_length-3) * 0.5))
 
         self.update_locations()
 

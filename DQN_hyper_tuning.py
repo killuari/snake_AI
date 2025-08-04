@@ -1,8 +1,11 @@
-import optuna
+import optuna, os, json
 from stable_baselines3 import DQN
 from stable_baselines3.common.evaluation import evaluate_policy
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
-def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake_fov_radius = 1):
+PATH = os.path.join("Training", "DQN_Hyperparameter_Tuning")
+
+def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake_fov_radius = 1, timesteps = 200_000, num_envs = 1):
     """
     Objective function für Optuna Hyperparameter Optimization
     """
@@ -22,7 +25,7 @@ def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake
     
     # Environment erstellen (nur eine für schnelleres Tuning)
     from snake_game_environment import make_snake_env
-    env = make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius)()
+    env = SubprocVecEnv([make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius) for _ in range(num_envs)])
     
     try:
         # DQN Modell mit den vorgeschlagenen Parametern
@@ -45,7 +48,7 @@ def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake
         )
         
         # Kurzes Training für schnelles Feedback
-        model.learn(total_timesteps=100_000)
+        model.learn(total_timesteps=timesteps)
         
         # Evaluation
         mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=10, deterministic=True)
@@ -59,7 +62,7 @@ def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake
         env.close()
         return -1000
 
-def run_hyperparameter_optimization(grid_size = 30, grid_width = 30, grid_height = 20, snake_fov_radius = 1):
+def run_hyperparameter_optimization(grid_size = 30, grid_width = 30, grid_height = 20, snake_fov_radius = 1, timesteps = 200_000, num_envs = 4, n_trials = 50, filename = os.path.join(PATH, "best_dqn_params.json")):
     """
     Führt die Hyperparameter-Optimierung durch
     """
@@ -72,7 +75,7 @@ def run_hyperparameter_optimization(grid_size = 30, grid_width = 30, grid_height
     
     # Optimization durchführen
     print("Starting hyperparameter optimization...")
-    study.optimize(lambda trial: optimize_dqn(trial, grid_size, grid_width, grid_height, snake_fov_radius), n_trials=50)  # Anzahl Trials anpassen
+    study.optimize(lambda trial: optimize_dqn(trial, grid_size, grid_width, grid_height, snake_fov_radius, timesteps, num_envs), n_trials=n_trials)  # Anzahl Trials anpassen
     
     print("Best trial:")
     trial = study.best_trial
@@ -80,5 +83,10 @@ def run_hyperparameter_optimization(grid_size = 30, grid_width = 30, grid_height
     print("Params: ")
     for key, value in trial.params.items():
         print(f"    {key}: {value}")
+
+    with open(filename, "w") as file:
+        json.dump(study.best_params, file, indent=4)
+        
+        print(f"Parameters saved to {filename}")
     
     return study.best_params

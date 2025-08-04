@@ -1,10 +1,11 @@
 from snake_game_environment import SnakeGameEnvironment, make_snake_env
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 from DQN_hyper_tuning import run_hyperparameter_optimization
+from custom_callback import MaxStepPunishLogger
 import os
 import numpy as np
 
@@ -32,14 +33,14 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         else:
             if params is None:
                 params = {
-                    "learning_rate": 5e-4,
-                    "buffer_size": 200_000,
+                    "learning_rate": 6e-5,
+                    "buffer_size": 500_000,
                     "learning_starts": 50_000,
-                    "batch_size": 64,
-                    "tau": 0.005,
-                    "gamma": 0.99,
+                    "batch_size": 256,
+                    "tau": 0.1,
+                    "gamma": 0.988,
                     "train_freq": 4,
-                    "gradient_steps": 1,
+                    "gradient_steps": 4,
                     "target_update_interval": 2000,
                     "exploration_fraction": 0.2,
                     "exploration_final_eps": 0.02,
@@ -63,7 +64,12 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     else:
         path = os.path.join(PPO_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
-            model = PPO.load(os.path.join(path, "last_model"), train_env, device='cpu', verbose=1)
+            model = PPO.load(path=os.path.join(path, "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True)
+
+            print(f"""
+                Successfully loaded PPO Model ({model._total_timesteps} total_timesteps)
+                [from Path {path}]
+            """)
         else:
             model = PPO(
                 "MlpPolicy", train_env,
@@ -85,7 +91,9 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         deterministic=True
     )
 
-    model.learn(total_timesteps=timesteps, callback=eval_callback)
+    max_step_logger = MaxStepPunishLogger()
+
+    model.learn(total_timesteps=timesteps, callback=[eval_callback, max_step_logger], reset_num_timesteps=False)
     model.save(os.path.join(path, "last_model"))
 
     train_env.close()
@@ -128,9 +136,5 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
         print(obs)
 
 if __name__ == "__main__":
-    #test_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=5)
-
-    best_params = run_hyperparameter_optimization(GRID_SIZE, grid_width=30, grid_height=20, snake_fov_radius=5)
-    print(best_params)
-
-    train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=5, timesteps=3_000_000, num_envs=12, params=best_params)
+    test_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=5)
+    #train_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=5, timesteps=3_000_000, num_envs=12, new=False)

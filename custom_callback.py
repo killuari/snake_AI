@@ -62,3 +62,18 @@ class BestModelComparisonCallback(BaseCallback):
                             print(f"Average Snake Length (last 100): {avg_length:.2f}")
         
         return True
+
+class MaxStepPunishLogger(BaseCallback):
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.death_counts = 0
+        self.total_steps = 0
+
+    def _on_step(self) -> bool:
+        rewards = np.array(self.locals["rewards"])  # array of shape (num_envs,)
+        self.death_counts += np.sum(rewards == -0.5)
+        self.total_steps += rewards.size
+        if self.num_timesteps % 20_000 == 0:
+            rate = 100 * self.death_counts / max(1, self.total_steps)
+            print(f"[Step {self.num_timesteps}] MaxStepPunish-Rate: {rate:.2f}%")
+        return True
