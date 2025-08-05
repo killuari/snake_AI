@@ -19,7 +19,6 @@ class SnakeGameEnvironment(gym.Env):
         self.grid_height = grid_height
         self.snake_fov_radius = snake_fov_radius
         self.training = training
-        self.max_length = grid_width * grid_height
 
         self.snakeGame = None
 
@@ -104,13 +103,13 @@ class SnakeGameEnvironment(gym.Env):
         reward = 0
         terminated = False
         self.steps += 1
+        snake_length = len(self.snakeGame.snake_list)
 
         alive = self.snakeGame.move_snake(self.dir)
-
         apple_eaten = self.snakeGame.eat_apple()
         
-        snake_length = len(self.snakeGame.snake_list)
-        max_steps = 500
+        # set max_steps to 2/3 of grid area
+        max_steps = 2/3 * (self.grid_width * self.grid_height)
 
         if apple_eaten:
             reward = 1
@@ -121,8 +120,10 @@ class SnakeGameEnvironment(gym.Env):
 
         if not alive:
             terminated = True
+
+            if self.training:
             # Bestrafung abhängig von aktueller Snake-Länge -(min: 1  max: 20)
-            reward = -min(20, max(1, (snake_length-3) * 0.5))
+                reward = -min(20, max(1, (snake_length-3) * 0.5))
 
         self.update_locations()
 

@@ -5,22 +5,17 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 from DQN_hyper_tuning import run_hyperparameter_optimization
-from custom_callback import MaxStepPunishLogger
+from custom_callback import MaxStepPunishLogger, DeathLogger
 import os
 import numpy as np
 
 GRID_SIZE = 30
 
-# Reward_1_(500)-0.5_-1
-# Reward_1_(500)-0.5_-5
-# Reward_1_(500)-0.5_-(1, 0.5(len-3), 10)
-# Reward_1_(500)-0.5_-(1, 0.5(len-3), 20)
-
 LOG_PATH = os.path.join("Training", "Logs")
-PPO_PATH = os.path.join("Training", "Saved Models", "PPO", "Reward_1_(500)-0.5_-(1, 0.5(len-3), 20)")
-DQN_PATH = os.path.join("Training", "Saved Models", "DQN", "Reward_1_(500)-0.5_-(1, 0.5(len-3), 20)")
+PPO_PATH = os.path.join("Training", "Saved Models", "PPO")
+DQN_PATH = os.path.join("Training", "Saved Models", "DQN")
 
-def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=500_000, num_envs=4, new=True, params=None):
+def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=500_000, num_envs=4, new=True, params=None, best=True):
     train_env = SubprocVecEnv([make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius) for _ in range(num_envs)])
     raw_eval_env = SnakeGameEnvironment(GRID_SIZE, grid_width, grid_height, snake_fov_radius)
     raw_eval_env = TimeLimit(raw_eval_env, max_episode_steps=10000)
@@ -29,7 +24,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     if model_name == "DQN":
         path = os.path.join(DQN_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
-            model = DQN.load(os.path.join(path, "last_model"), train_env, device='cpu', verbose=1)
+            model = DQN.load(os.path.join(path, "best_model" if best else "last_model"), train_env, device='cpu', verbose=1)
         else:
             if params is None:
                 params = {
@@ -64,12 +59,9 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     else:
         path = os.path.join(PPO_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
-            model = PPO.load(path=os.path.join(path, "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True)
+            model = PPO.load(path=os.path.join(path, "best_model" if best else "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True)
 
-            print(f"""
-                Successfully loaded PPO Model ({model._total_timesteps} total_timesteps)
-                [from Path {path}]
-            """)
+            print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps)\n[from Path: {path}]")
         else:
             model = PPO(
                 "MlpPolicy", train_env,
@@ -85,13 +77,13 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         eval_env,
         callback_on_new_best=stop_callback,
         best_model_save_path=path,
-        eval_freq=20_000,                # alle 20k Steps evaluieren
+        eval_freq=max((timesteps // 10) // num_envs, 1),                # alle 100k Steps evaluieren
         n_eval_episodes=10,
         verbose=1,
         deterministic=True
     )
 
-    max_step_logger = MaxStepPunishLogger()
+    max_step_logger = DeathLogger()
 
     model.learn(total_timesteps=timesteps, callback=[eval_callback, max_step_logger], reset_num_timesteps=False)
     model.save(os.path.join(path, "last_model"))
@@ -106,13 +98,18 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
         model = DQN.load(os.path.join(DQN_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env)
     else:
         model = PPO.load(os.path.join(PPO_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env, device="cpu")
+        print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps)\n[from Path: {os.path.join(PPO_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model")}]")
 
     obs, info = env.reset()
     done = False
+    score = 0
 
     while not done:
-        action, _ = model.predict(obs, deterministic=True)
+        action, _ = model.predict(obs, deterministic=False)
         obs, reward, done, _, info = env.step(action)
+        score += reward
+
+    print(f"Ended with Score: {score}")
 
 def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
     env = make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, "human", training=False)()
@@ -136,5 +133,5 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
         print(obs)
 
 if __name__ == "__main__":
-    test_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=5)
-    #train_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=5, timesteps=3_000_000, num_envs=12, new=False)
+    #test_model(model_name="PPO", grid_width=50, grid_height=30, snake_fov_radius=5)
+    train_model(model_name="PPO", grid_width=50, grid_height=30, snake_fov_radius=5, timesteps=3_000_000, num_envs=16, new=False, best=False)

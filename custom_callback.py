@@ -73,7 +73,44 @@ class MaxStepPunishLogger(BaseCallback):
         rewards = np.array(self.locals["rewards"])  # array of shape (num_envs,)
         self.death_counts += np.sum(rewards == -0.5)
         self.total_steps += rewards.size
-        if self.num_timesteps % 20_000 == 0:
+        if self.num_timesteps % 100_000 == 0:
             rate = 100 * self.death_counts / max(1, self.total_steps)
             print(f"[Step {self.num_timesteps}] MaxStepPunish-Rate: {rate:.2f}%")
+        return True
+    
+class DeathLogger(BaseCallback):
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.maxstep_deaths = 0
+        self.collision_deaths = 0
+        self.total_episodes = 0
+        self.last_reported_timestep = 0
+    
+    def _on_step(self) -> bool:
+        # Check if any episodes ended this step
+        dones = np.array(self.locals.get("dones", []))
+        rewards = np.array(self.locals.get("rewards", []))
+        
+        # Count completed episodes
+        episodes_completed = np.sum(dones)
+        self.total_episodes += episodes_completed
+        
+        # Count different death types when episodes end
+        maxstep_deaths = np.sum((dones == True) & (rewards == -0.5))
+        collision_deaths = np.sum((dones == True) & (rewards <= -1))  # Collision deaths have more negative rewards
+        
+        self.maxstep_deaths += maxstep_deaths
+        self.collision_deaths += collision_deaths
+        
+        # Report every 100k timesteps
+        if self.num_timesteps - self.last_reported_timestep >= 100_000:
+            if self.total_episodes > 0:
+                maxstep_rate = 100 * self.maxstep_deaths / self.total_episodes
+                collision_rate = 100 * self.collision_deaths / self.total_episodes
+                print(f"[Step {self.num_timesteps}] MaxStep: {maxstep_rate:.1f}% | Collision: {collision_rate:.1f}% | Total Episodes: {self.total_episodes}")
+            else:
+                print(f"[Step {self.num_timesteps}] No episodes completed yet")
+            
+            self.last_reported_timestep = self.num_timesteps
+        
         return True
