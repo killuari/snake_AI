@@ -29,16 +29,16 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
             if params is None:
                 params = {
                     "learning_rate": 6e-5,
-                    "buffer_size": 500_000,
+                    "buffer_size": 2_000_000,
                     "learning_starts": 50_000,
                     "batch_size": 256,
-                    "tau": 0.1,
+                    "tau": 0.4,
                     "gamma": 0.988,
                     "train_freq": 4,
                     "gradient_steps": 4,
                     "target_update_interval": 2000,
                     "exploration_fraction": 0.2,
-                    "exploration_final_eps": 0.02,
+                    "exploration_final_eps": 0.05,
                 }
 
             model = DQN(
@@ -61,7 +61,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         if not new:
             model = PPO.load(path=os.path.join(path, "best_model" if best else "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True)
 
-            print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps)\n[from Path: {path}]")
+            print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps) [from Path: {path}]")
         else:
             model = PPO(
                 "MlpPolicy", train_env,
@@ -77,7 +77,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         eval_env,
         callback_on_new_best=stop_callback,
         best_model_save_path=path,
-        eval_freq=max((timesteps // 10) // num_envs, 1),                # alle 100k Steps evaluieren
+        eval_freq=max((timesteps // 10) // num_envs, 1),                # evaluate 10 times per training
         n_eval_episodes=10,
         verbose=1,
         deterministic=True
@@ -105,7 +105,7 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
     score = 0
 
     while not done:
-        action, _ = model.predict(obs, deterministic=False)
+        action, _ = model.predict(obs, deterministic=True)
         obs, reward, done, _, info = env.step(action)
         score += reward
 
@@ -133,5 +133,5 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
         print(obs)
 
 if __name__ == "__main__":
-    #test_model(model_name="PPO", grid_width=50, grid_height=30, snake_fov_radius=5)
-    train_model(model_name="PPO", grid_width=50, grid_height=30, snake_fov_radius=5, timesteps=3_000_000, num_envs=16, new=False, best=False)
+    test_model(model_name="PPO", grid_width=50, grid_height=30, snake_fov_radius=5)
+    #train_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=1, timesteps=3_000_000, num_envs=24, new=False, best=False)

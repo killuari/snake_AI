@@ -122,7 +122,7 @@ class SnakeGameEnvironment(gym.Env):
             terminated = True
 
             if self.training:
-            # Bestrafung abhängig von aktueller Snake-Länge -(min: 1  max: 20)
+                # Bestrafung abhängig von aktueller Snake-Länge -(min: 1  max: 20)
                 reward = -min(20, max(1, (snake_length-3) * 0.5))
 
         self.update_locations()

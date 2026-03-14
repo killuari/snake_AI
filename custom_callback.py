@@ -85,6 +85,9 @@ class DeathLogger(BaseCallback):
         self.collision_deaths = 0
         self.total_episodes = 0
         self.last_reported_timestep = 0
+
+    def _on_training_start(self) -> None:
+        self.last_reported_timestep = self.num_timesteps
     
     def _on_step(self) -> bool:
         # Check if any episodes ended this step
@@ -107,9 +110,9 @@ class DeathLogger(BaseCallback):
             if self.total_episodes > 0:
                 maxstep_rate = 100 * self.maxstep_deaths / self.total_episodes
                 collision_rate = 100 * self.collision_deaths / self.total_episodes
-                print(f"[Step {self.num_timesteps}] MaxStep: {maxstep_rate:.1f}% | Collision: {collision_rate:.1f}% | Total Episodes: {self.total_episodes}")
+                print(f"[Step {self.num_timesteps:,}] MaxStep: {maxstep_rate:.1f}% | Collision: {collision_rate:.1f}% | Total Episodes: {self.total_episodes}")
             else:
-                print(f"[Step {self.num_timesteps}] No episodes completed yet")
+                print(f"[Step {self.num_timesteps:,}] No episodes completed yet")
             
             self.last_reported_timestep = self.num_timesteps
         
