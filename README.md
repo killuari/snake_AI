@@ -65,8 +65,6 @@ Install the required libraries using pip:
 pip install gymnasium pygame stable-baselines3 optuna numpy
 ```
 
-*(Note: simply run `pip install -r requirements.txt`)*
-
 ### 3. Execution Guide
 
 The `main.py` script is the central entry point of the project. You can switch between different modes by modifying the function calls in the `if __name__ == "__main__":` block at the bottom of the script.
