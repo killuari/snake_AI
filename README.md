@@ -82,6 +82,23 @@ To watch the trained agent play, use `test_model(model_name="DQN")`. This will o
 
 ---
 
+## Project Structure
+
+```text
+├── DQN_hyper_tuning.py        # Hyperparameter optimization script
+├── custom_callback.py         # Custom logging and evaluation callbacks
+├── main.py                    # Main entry point and training pipeline
+├── snake_game.py              # Pygame-based game engine
+└── snake_game_environment.py  # Gymnasium environment wrapper
+```
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
 **Developed by Luis Kahles**
 
 *Focus: Reinforcement Learning, Modular Software Architecture, and AI-Driven Automation.*
