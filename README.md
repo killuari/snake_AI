@@ -39,9 +39,9 @@ To make the game "trainable", I implemented a custom `gym.Env` (Gymnasium) wrapp
 ### The Observation Logic
 The agent doesn't just see pixels; it understands the state. The observation space is a `MultiDiscrete` array representing the contents of the local FOV:
 - `0`: Empty Space
-- `1`: Wall
-- `2`: Snake Body
-- `3`: Apple
+- `1`: Snake Body
+- `2`: Apple
+- `3`: Wall
 
 
 

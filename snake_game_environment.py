@@ -203,7 +203,7 @@ class SnakeGameEnvironment(gym.Env):
         # Render score overlay (font only exists in human mode)
         if self.font is not None:
             score_display = self.font.render(f"Score: {self.snakeGame.score}", True, pygame.Color(255, 255, 255))
-        canvas.blit(score_display, (15, 15))
+            canvas.blit(score_display, (15, 15))
 
         if self.render_mode == "human":
             self.screen.blit(canvas, (0, 0))

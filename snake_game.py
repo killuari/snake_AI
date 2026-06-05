@@ -156,26 +156,26 @@ class SnakeGame:
             
     def eat_apple(self):
         """
-        Check if the apple overlaps with any snake segment.
-        If so, re-place the apple, grow the snake, and increment the score.
-
-        NOTE: This uses a while-loop to keep re-placing until the apple
-        lands on an empty cell. Each iteration also grows the snake,
-        which means multiple growth events can occur if the apple
-        keeps landing on the snake body. (See code review for details.)
+        Check if the snake's head is on the apple.
+        If so, grow the snake by one segment, increment the score,
+        and re-place the apple on an empty cell.
 
         Returns:
             True if the apple was eaten, False otherwise.
         """
-        apple_eaten = False
+        if not np.array_equal(self.apple.grid_pos, self.head.grid_pos):
+            return False
 
+        # Apple was eaten: grow snake and increment score
+        self.add_part()
+        self.score += 1
+
+        # Re-place the apple until it lands on an empty cell
+        # (not overlapping any snake segment)
         while any(np.array_equal(self.apple.grid_pos, part.grid_pos) for part in self.snake_list):
             self.apple.place()
-            self.add_part()
-            self.score += 1
-            apple_eaten = True
 
-        return apple_eaten
+        return True
 
     def draw(self, screen):
         """Render all snake segments and the apple onto the given Pygame surface."""
@@ -264,17 +264,18 @@ class Apple:
         """
         Randomly place the apple on a grid cell.
 
-        NOTE: The pixel position uses an offset of grid_size // 2 so that the
-        circle's center aligns with the center of the grid cell. The grid_pos
-        is calculated via integer division, which maps back to the correct cell.
+        Uses grid coordinates directly (random integer in [0, width-1]),
+        then converts to pixel position aligned with the snake grid.
         """
-        x, y = random.randrange(self.grid_size // 2, self.grid_width * self.grid_size, self.grid_size), random.randrange(self.grid_size // 2, self.grid_height * self.grid_size, self.grid_size)
-        self.pos = pygame.Vector2(x, y)
-        self.grid_pos = np.array([x // self.grid_size, y // self.grid_size])
+        gx = random.randint(0, self.grid_width - 1)
+        gy = random.randint(0, self.grid_height - 1)
+        self.grid_pos = np.array([gx, gy])
+        self.pos = pygame.Vector2(gx * self.grid_size, gy * self.grid_size)
 
     def draw(self, screen):
-        """Draw the apple as a red circle centered at its pixel position."""
-        pygame.draw.circle(screen, pygame.Color(230, 100, 100), self.pos, self.grid_size/2)
+        """Draw the apple as a red circle centered in its grid cell."""
+        center = self.pos + pygame.Vector2(self.grid_size / 2, self.grid_size / 2)
+        pygame.draw.circle(screen, pygame.Color(230, 100, 100), center, self.grid_size / 2)
 
 
 # ─── Standalone Game Loop ────────────────────────────────────────────────────
