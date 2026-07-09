@@ -17,7 +17,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 from DQN_hyper_tuning import run_hyperparameter_optimization
-from custom_callback import MaxStepPunishLogger, DeathLogger
+from custom_callback import DeathLogger
 import os
 import numpy as np
 
@@ -128,10 +128,10 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     )
 
     # Custom callback to log death causes (max-step vs collision)
-    max_step_logger = DeathLogger()
+    death_logger = DeathLogger()
 
     # Start training
-    model.learn(total_timesteps=timesteps, callback=[eval_callback, max_step_logger], reset_num_timesteps=False)
+    model.learn(total_timesteps=timesteps, callback=[eval_callback, death_logger], reset_num_timesteps=False)
 
     # Always save the final model (in addition to the best model saved by EvalCallback)
     model.save(os.path.join(path, "last_model"))
@@ -168,7 +168,8 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
     # Run the agent until the episode ends
     while not done:
         action, _ = model.predict(obs, deterministic=False)   # Use greedy policy (no exploration)
-        obs, reward, done, _, info = env.step(action)
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
         score += float(reward)
 
     print(f"Ended with Score: {score}")
@@ -185,19 +186,17 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
 
     obs, info = env.reset()
     done = False
-    score = 0.0 
+    score = 0.0
+    key_map = {"d": 0, "s": 1, "a": 2, "w": 3}  # RIGHT, DOWN, LEFT, UP
 
     while not done:
-        action = input("action: ")
-        if action == "d":
-            action = np.array(0)       # RIGHT
-        elif action == "s":
-            action = np.array(1)       # DOWN
-        elif action == "a":
-            action = np.array(2)       # LEFT
-        elif action == "w":
-            action = np.array(3)       # UP
-        obs, reward, done, _, info = env.step(action)
+        raw = input("action: ")
+        if raw not in key_map:
+            print("Ungueltige Eingabe, bitte w/a/s/d verwenden.")
+            continue
+        action = np.array(key_map[raw])
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
         score += float(reward)
         print(obs)
 
