@@ -72,6 +72,17 @@ class SnakeGameEnvironment(gym.Env):
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
+    def classify_cell(self, loc: np.ndarray) -> int:
+        """Classify a single cell in the FOV."""
+        if loc[0] < 0 or loc[0] >= self.grid_width or loc[1] < 0 or loc[1] >= self.grid_height:
+            return 3      # Wall / out of bounds
+        elif np.array_equal(loc, self.apple_location):
+            return 2      # Apple
+        elif any(np.array_equal(loc, tail_part) for tail_part in self.tail_locations):
+            return 1      # Snake body
+        else:
+            return 0      # Empty
+
     def _get_obs(self):
         """Build observation array from current game state.
         Scans FOV around head. Each cell: 0=empty, 1=body, 2=apple, 3=wall."""
@@ -82,37 +93,36 @@ class SnakeGameEnvironment(gym.Env):
             for dx in range(-self.snake_fov_radius, self.snake_fov_radius + 1):
                 if dx == 0 and dy == 0:
                     continue  # Skip head position
-                loc = np.array([hx + dx, hy + dy])
-                locations.append(loc)
 
-        # Classify each cell in the FOV
-        for loc in range(len(locations)):
-            if locations[loc][0] < 0 or locations[loc][0] >= self.grid_width or locations[loc][1] < 0 or locations[loc][1] >= self.grid_height:
-                locations[loc] = 3      # Wall / out of bounds
-            elif np.array_equal(locations[loc], self.apple_location):
-                locations[loc] = 2      # Apple
-            elif any(np.array_equal(locations[loc], tail_part) for tail_part in self.tail_locations):
-                locations[loc] = 1      # Snake body
-            else:
-                locations[loc] = 0      # Empty
+                loc = np.array([hx + dx, hy + dy])
+                classification = self.classify_cell(loc)
+                
+                locations.append(classification)
 
         return np.array(locations)
     
     def _get_info(self):
         """Return auxiliary info dict with current snake length."""
-        return {
-            "snake_length": len(self.snakeGame.snake_list)
-        }
+        if self.snakeGame is None:
+            return {"snake_length": 0}
+
+        return {"snake_length": len(self.snakeGame.snake_list)}
     
     def update_locations(self):
         """Cache head, apple, and tail positions from game state."""
+        if self.snakeGame is None:
+            self.head_location = np.array([-1, -1])
+            self.apple_location = np.array([-1, -1])
+            self.tail_locations = []
+            return
+
         self.head_location = self.snakeGame.head.grid_pos
         self.apple_location = self.snakeGame.apple.grid_pos
         self.tail_locations = self.snakeGame.get_tail_locations()
     
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         """Reset to a fresh game. Returns (observation, info)."""
-        super().reset(seed=seed)
+        super().reset(seed=seed, options=options)
 
         self.snakeGame = SnakeGame(self.grid_size, self.grid_width, self.grid_height)
         self.dir = Direction.RIGHT     # Always start facing right
@@ -139,6 +149,12 @@ class SnakeGameEnvironment(gym.Env):
 
         Returns: (observation, reward, terminated, truncated=False, info)
         """
+        if self.snakeGame is None:
+            raise RuntimeError("Call reset() before step().")
+        
+        if self.dir is None:
+            raise RuntimeError("Direction not initialized. Call reset() first.")
+
         action = action.item()
         # Prevent 180° reversal (would cause instant self-collision)
         if self.action_to_direction[action] != self.dir.opposite():
@@ -194,8 +210,11 @@ class SnakeGameEnvironment(gym.Env):
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
 
+        if self.snakeGame is None:
+            raise RuntimeError("Call reset() before rendering.")
+
         # Draw on off-screen canvas
-        canvas = pygame.Surface(((self.grid_size * self.grid_width, self.grid_size * self.grid_height)))
+        canvas = pygame.Surface((self.grid_size * self.grid_width, self.grid_size * self.grid_height))
         canvas.fill("black")
 
         self.snakeGame.draw(canvas)
@@ -205,7 +224,7 @@ class SnakeGameEnvironment(gym.Env):
             score_display = self.font.render(f"Score: {self.snakeGame.score}", True, pygame.Color(255, 255, 255))
             canvas.blit(score_display, (15, 15))
 
-        if self.render_mode == "human":
+        if self.render_mode == "human" and self.screen is not None and self.clock is not None:
             self.screen.blit(canvas, (0, 0))
             pygame.event.pump()        # Keep window responsive
             pygame.display.flip()

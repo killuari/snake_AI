@@ -1,5 +1,5 @@
 """
-main.py — Training & Testing Pipeline for the Snake RL Agent
+main.py - Training & Testing Pipeline for the Snake RL Agent
 
 This is the central entry point for the project. It provides functions to:
     - train_model():        Train a DQN or PPO agent with parallel environments.
@@ -152,7 +152,7 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
     env = make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, "human", training=False)()
 
     if model_name == "DQN":
-        model = DQN.load(os.path.join(DQN_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env)
+        model = DQN.load(os.path.join(DQN_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env, device="cpu")
     else:
         load_path = os.path.join(PPO_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model")
         model = PPO.load(load_path, env, device="cpu")
@@ -160,13 +160,13 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
 
     obs, info = env.reset()
     done = False
-    score = 0
+    score = 0.0
 
     # Run the agent until the episode ends
     while not done:
-        action, _ = model.predict(obs, deterministic=True)   # Use greedy policy (no exploration)
+        action, _ = model.predict(obs, deterministic=False)   # Use greedy policy (no exploration)
         obs, reward, done, _, info = env.step(action)
-        score += reward
+        score += float(reward)
 
     print(f"Ended with Score: {score}")
 
@@ -182,7 +182,7 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
 
     obs, info = env.reset()
     done = False
-    score = 0
+    score = 0.0 
 
     while not done:
         action = input("action: ")
@@ -195,12 +195,11 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
         elif action == "w":
             action = np.array(3)       # UP
         obs, reward, done, _, info = env.step(action)
-        score += reward
+        score += float(reward)
         print(obs)
 
 
-# ─── Entry Point ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     # Switch between these calls to train, test, or debug:
-    test_model(model_name="PPO", grid_width=50, grid_height=30, snake_fov_radius=5)
+    test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=5)
     #train_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=1, timesteps=3_000_000, num_envs=24, new=False, best=False)

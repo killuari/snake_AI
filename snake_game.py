@@ -92,16 +92,17 @@ class SnakeGame:
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
-
-        # Create the apple (randomly placed on the grid)
-        self.apple = Apple(grid_size, grid_width, grid_height)
         self.score = 0
-        
+
         # Initialize the snake at the center of the grid, facing right,
         # with 3 segments: head + 2 body parts extending to the left.
         pos = pygame.Vector2(grid_size*grid_width // 2, grid_size*grid_height // 2)
         self.head = SnakePart(grid_size, grid_width, grid_height, pos)
         self.snake_list = [self.head, SnakePart(grid_size, grid_width, grid_height, pos - pygame.Vector2(self.grid_size, 0)), SnakePart(grid_size, grid_width, grid_height, pos - 2*pygame.Vector2(self.grid_size, 0))]
+
+        # Create the apple, placed on a cell not occupied by the snake
+        self.apple = Apple(grid_size, grid_width, grid_height)
+        self.apple.place([part.grid_pos for part in self.snake_list])
 
     def get_tail_locations(self):
         """Return a list of grid positions for all body parts (excluding the head).
@@ -129,20 +130,22 @@ class SnakeGame:
         Returns:
             True if the snake is still alive, False if it hit a wall or itself.
         """
-        pos = self.head.pos.copy()
+        new_pos = self.head.pos.copy()
         alive = self.head.move(dir)
 
-        # Check self-collision (head position vs. all body parts)
-        if self.detect_collision():
-            alive = False
-    
         # Cascade positions: each body part takes the previous position
         # of the part in front of it
         for part in self.snake_list[1:]:
-            new_pos = part.pos.copy()
-            part.pos = pos.copy()
+            pos = part.pos.copy()
+            part.pos = new_pos.copy()
             part.grid_pos = np.array([part.pos.x // self.grid_size, part.pos.y // self.grid_size])
-            pos = new_pos
+            new_pos = pos
+
+        # Check self-collision after the cascade, so moving into the cell the
+        # tail just vacated (the tail always moves away this same tick) is not
+        # incorrectly counted as a collision.
+        if self.detect_collision():
+            alive = False
 
         return alive
 
@@ -170,10 +173,8 @@ class SnakeGame:
         self.add_part()
         self.score += 1
 
-        # Re-place the apple until it lands on an empty cell
-        # (not overlapping any snake segment)
-        while any(np.array_equal(self.apple.grid_pos, part.grid_pos) for part in self.snake_list):
-            self.apple.place()
+        # Re-place the apple on a cell not occupied by the snake
+        self.apple.place([part.grid_pos for part in self.snake_list])
 
         return True
 
@@ -258,19 +259,35 @@ class Apple:
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
-        self.place()  # Randomly place the apple on initialization
+        self.grid_pos = np.array([-1, -1])       # Sentinel until place() is called
+        self.pos = pygame.Vector2(-1, -1)
 
-    def place(self):
+    def place(self, occupied_cells):
         """
-        Randomly place the apple on a grid cell.
+        Randomly place the apple on a free grid cell.
 
-        Uses grid coordinates directly (random integer in [0, width-1]),
-        then converts to pixel position aligned with the snake grid.
+        Builds the list of cells not occupied by `occupied_cells` (e.g. the
+        snake's segments) and picks uniformly among those, instead of
+        repeatedly guessing random cells and rejecting occupied ones.
+
+        Args:
+            occupied_cells: Iterable of grid positions (arrays/tuples of x,y)
+                             that the apple must not be placed on.
+
+        Returns:
+            True if a free cell was found and the apple was placed,
+            False if the grid is completely full (no free cell exists).
         """
-        gx = random.randint(0, self.grid_width - 1)
-        gy = random.randint(0, self.grid_height - 1)
+        occupied = {tuple(int(v) for v in cell) for cell in occupied_cells}
+        free_cells = [(x, y) for x in range(self.grid_width) for y in range(self.grid_height) if (x, y) not in occupied]
+
+        if not free_cells:
+            return False  # Grid is completely filled by the snake
+
+        gx, gy = random.choice(free_cells)
         self.grid_pos = np.array([gx, gy])
         self.pos = pygame.Vector2(gx * self.grid_size, gy * self.grid_size)
+        return True
 
     def draw(self, screen):
         """Draw the apple as a red circle centered in its grid cell."""
@@ -301,6 +318,9 @@ if __name__ == "__main__":
                 if event.key == pygame.K_ESCAPE:
                     running = False
 
+        if not running:
+            break
+
         screen.fill("black")
 
         # Read keyboard input for direction changes.
@@ -316,7 +336,9 @@ if __name__ == "__main__":
             dir = Direction.RIGHT
 
         # Move the snake; if it dies, stop the game loop
-        running = snakeGame.move_snake(dir)
+        alive = snakeGame.move_snake(dir)
+        if not alive:
+            running = False
 
         # Check and handle apple eating
         snakeGame.eat_apple()
