@@ -27,6 +27,7 @@ from custom_callback import DeathLogger
 from feature_extractors import SnakeCombinedExtractor
 import os
 import json
+import glob
 import numpy as np
 import pygame
 
@@ -37,6 +38,29 @@ GRID_SIZE = 30
 LOG_PATH = os.path.join("Training", "Logs")
 PPO_PATH = os.path.join("Training", "Saved Models", "PPO")
 DQN_PATH = os.path.join("Training", "Saved Models", "DQN")
+
+
+def _finalize_checkpoint(path, prefix, total_timesteps):
+    """
+    Rename path/{prefix}.zip (just written by model.save()/EvalCallback) to
+    path/{prefix}_{total_timesteps}.zip, so the filename itself records how many
+    timesteps the checkpoint was trained for. Replaces any stale checkpoint left
+    over from a previous training run under the same prefix.
+    """
+    plain_path = os.path.join(path, f"{prefix}.zip")
+    if not os.path.exists(plain_path):
+        return
+    for stale in glob.glob(os.path.join(path, f"{prefix}_*.zip")):
+        os.remove(stale)
+    os.rename(plain_path, os.path.join(path, f"{prefix}_{total_timesteps}.zip"))
+
+
+def _find_checkpoint(path, prefix):
+    """Find the (single) path/{prefix}_{timesteps}.zip checkpoint written by _finalize_checkpoint()."""
+    matches = glob.glob(os.path.join(path, f"{prefix}_*.zip"))
+    if not matches:
+        raise FileNotFoundError(f"No '{prefix}' checkpoint found in {path}")
+    return max(matches, key=os.path.getmtime)
 
 
 def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_fov_radius, obs_mode="flat", n_episodes=10, model_label=""):
@@ -92,7 +116,9 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         num_envs:         Number of parallel environments (subprocesses).
         new:              If True, create a fresh model. If False, load from disk.
         params:           Optional dict of hyperparameters (DQN only). Uses defaults if None.
-        best:             If loading (new=False), load "best_model" (True) or "last_model" (False).
+        best:             If loading (new=False), load the "best_model" (True) or "last_model" (False)
+                          checkpoint (filenames carry the timesteps they were trained for, e.g.
+                          "best_model_3000000.zip" -- see _find_checkpoint()).
         use_tuned_params: If True and params is None (DQN only), load hyperparameters
                           previously found by DQN_hyper_tuning.run_hyperparameter_optimization()
                           instead of using the hardcoded defaults.
@@ -121,7 +147,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         path = os.path.join(DQN_PATH, "GRID" if use_cnn else "FLAT", f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
             # Resume training from a saved model (policy/feature-extractor are restored from the checkpoint)
-            model = DQN.load(os.path.join(path, "best_model" if best else "last_model"), train_env, device='cpu', verbose=1)
+            model = DQN.load(_find_checkpoint(path, "best_model" if best else "last_model"), train_env, device='cpu', verbose=1)
         else:
             # Default DQN hyperparameters, or previously tuned ones from Optuna
             if params is None:
@@ -162,7 +188,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         # PPO branch
         path = os.path.join(PPO_PATH, "GRID" if use_cnn else "FLAT", f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
-            model = PPO.load(path=os.path.join(path, "best_model" if best else "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True)
+            model = PPO.load(path=_find_checkpoint(path, "best_model" if best else "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True)
 
             print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps) [from Path: {path}]")
         else:
@@ -223,6 +249,16 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # Always save the final model (in addition to the best model saved by EvalCallback)
     model.save(os.path.join(path, "last_model"))
 
+    # Bake the cumulative trained timesteps into the checkpoint filenames (e.g.
+    # "best_model_3000000.zip"). model.num_timesteps already reflects the right
+    # value here: it started at 0 for a fresh model (new=True), or continued
+    # counting up from the loaded checkpoint's timesteps (new=False, since
+    # model.learn() above was called with reset_num_timesteps=False) -- so
+    # continuing training accumulates instead of overwriting the count.
+    total_timesteps_trained = model.num_timesteps
+    _finalize_checkpoint(path, "best_model", total_timesteps_trained)
+    _finalize_checkpoint(path, "last_model", total_timesteps_trained)
+
     # Clean up environments
     train_env.close()
     eval_env.close()
@@ -232,14 +268,13 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # at a glance without manually testing the model.
     print("\n=== Starting post-training evaluation ===")
     evaluation = {
-        "timesteps": timesteps,
+        "timesteps": total_timesteps_trained,
         "last_model": evaluate_model_performance(model, GRID_SIZE, grid_width, grid_height, snake_fov_radius, obs_mode=obs_mode, model_label="last model"),
     }
 
-    best_model_path = os.path.join(path, "best_model.zip")
-    if os.path.exists(best_model_path):
+    if glob.glob(os.path.join(path, "best_model_*.zip")):
         ModelClass = DQN if model_name == "DQN" else PPO
-        best = ModelClass.load(os.path.join(path, "best_model"), device="cpu")
+        best = ModelClass.load(_find_checkpoint(path, "best_model"), device="cpu")
         evaluation["best_model"] = evaluate_model_performance(best, GRID_SIZE, grid_width, grid_height, snake_fov_radius, obs_mode=obs_mode, model_label="best model")
 
     evaluation_path = os.path.join(path, "evaluation.json")
@@ -273,9 +308,11 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
     env = make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, "human", training=False, obs_mode=obs_mode, render_fps=fps)()
 
     if model_name == "DQN":
-        model = DQN.load(os.path.join(DQN_PATH, obs_mode_dir, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env, device="cpu")
+        checkpoint_dir = os.path.join(DQN_PATH, obs_mode_dir, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
+        model = DQN.load(_find_checkpoint(checkpoint_dir, "best_model"), env, device="cpu")
     else:
-        load_path = os.path.join(PPO_PATH, obs_mode_dir, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model")
+        checkpoint_dir = os.path.join(PPO_PATH, obs_mode_dir, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
+        load_path = _find_checkpoint(checkpoint_dir, "best_model")
         model = PPO.load(load_path, env, device="cpu")
         print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps)\n[from Path: {load_path}]")
 
@@ -310,7 +347,7 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
     while not done:
         raw = input("action: ")
         if raw not in key_map:
-            print("Ungueltige Eingabe, bitte w/a/s/d verwenden.")
+            print("Invalid input, please use w/a/s/d.")
             continue
         action = np.array(key_map[raw])
         obs, reward, terminated, truncated, info = env.step(action)

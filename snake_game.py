@@ -21,8 +21,8 @@ from enum import Enum
 # Default grid configuration used when running this file standalone.
 # These are NOT used by the RL environment - it passes its own values.
 GRID_SIZE = 30       # Size of each grid cell in pixels
-GRID_WIDTH = 50      # Number of cells horizontally
-GRID_HEIGHT = 30     # Number of cells vertically
+GRID_WIDTH = 32      # Number of cells horizontally
+GRID_HEIGHT = 18     # Number of cells vertically
 
 # Color palette (dark theme). Shared by the standalone game loop and by
 # snake_game_environment.py's rendering, so both look the same.
