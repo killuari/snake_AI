@@ -18,14 +18,6 @@ import threading
 import tkinter as tk
 import customtkinter as ctk
 
-# customtkinter's default rounded-corner renderer ("font_shapes", the non-macOS
-# default) draws corners using a special embedded shapes-font -- this Python's Tk
-# build has no FreeType/Xft linkage at all, so that font can't be rasterized and
-# every corner_radius > 0 renders as a glitchy notch. "polygon_shapes" (macOS's
-# default) draws corners with plain canvas polygons instead, which works fine here.
-from customtkinter.windows.widgets.core_rendering.draw_engine import DrawEngine
-DrawEngine.preferred_drawing_method = "polygon_shapes"
-
 from main import PPO_PATH, DQN_PATH, play_game, test_model, train_model
 from DQN_hyper_tuning import PATH as DQN_TUNING_PATH
 from snake_game import (
@@ -71,6 +63,34 @@ AMBER = "#ffd25a"
 
 # Corner radius shared by every rounded widget (buttons, sliders, cards, entries, ...).
 RADIUS = 10
+
+# Max width for a screen's control column (sliders, choice rows, entries) -- kept
+# narrower than the full panel and centered, rather than stretching every control
+# edge-to-edge across the whole (much wider) window. Model-card lists intentionally
+# don't use this -- they read fine at full width, like any list of items.
+CONTENT_WIDTH = 560
+
+# Minimum usable height for whichever child of a SubScreen's body is the single
+# expandable one (a CTkScrollableFrame's list, or a log box) -- enough to show a
+# real, functioning scroll region (roughly one row plus a hint of the next),
+# never a collapsed 0px sliver. Used by SubScreen.min_required_height() below.
+MIN_FLEX_HEIGHT = 240
+
+# Minimum window width -- comfortably fits CONTENT_WIDTH plus side padding and a
+# scrollbar; not computed dynamically since no screen has reported width issues.
+MIN_WIDTH = 760
+
+
+def _make_content_column(parent):
+    """
+    A width-capped container for a screen's control rows, packed without
+    fill="x" so pack's default centering places it in the middle of the
+    (wider) panel instead of stretching every row edge-to-edge. Deliberately
+    doesn't disable pack-propagate: the width is a hint the rows inside
+    (which use fill="x" relative to *this* frame, not the outer panel) settle
+    around, not a hard clamp that could collapse the frame's height to zero.
+    """
+    return ctk.CTkFrame(parent, fg_color="transparent", width=CONTENT_WIDTH)
 
 
 def _make_outline_button(parent, text, accent, command, font, width=220, height=48, corner_radius=None):
@@ -186,25 +206,8 @@ def _make_slider_row(parent, label, from_, to, step, initial, font_body, value_f
     return var
 
 
-def _make_segmented_row(parent, label, values, initial, font_body, command=None):
-    row = ctk.CTkFrame(parent, fg_color="transparent")
-    row.pack(fill="x", pady=8)
-    ctk.CTkLabel(row, text=label, font=font_body, text_color=TEXT).pack(anchor="w")
-
-    seg = ctk.CTkSegmentedButton(
-        row, values=values, corner_radius=RADIUS, font=font_body,
-        fg_color=PANEL, selected_color=AMBER, selected_hover_color=_mix(AMBER, "#000000", 0.2),
-        unselected_color=PANEL, unselected_hover_color=BORDER,
-        text_color=TEXT, text_color_disabled=TEXT_MUTED, command=command,
-    )
-    seg.set(initial)
-    seg.pack(fill="x", pady=(4, 0))
-    return seg
-
-
 class _Choice:
-    """A .get()/.set()/.configure(state=...) handle for _make_choice_row(), mirroring
-    just enough of CTkSegmentedButton's interface to be a drop-in replacement."""
+    """A .get()/.set()/.configure(state=...) handle for _make_choice_row()."""
 
     def __init__(self, select, buttons):
         self._value = None
@@ -225,18 +228,24 @@ class _Choice:
 
 def _make_choice_row(parent, label, values, initial, font_body, command=None):
     """
-    Like _make_segmented_row(), but built from individual outline buttons instead
-    of CTkSegmentedButton -- worked around a customtkinter rendering bug where a
-    segmented button with 3+ long-text options went completely blank (no visible
-    text on any segment) on this Tk build, even though the widget's internal state
-    was otherwise correct; 2-option segmented buttons elsewhere are unaffected.
+    A labeled row of mutually-exclusive outline buttons (used everywhere a
+    single choice needs to be made -- algorithm, grid size, playback mode, ...).
+    Built from individual buttons instead of CTkSegmentedButton for two reasons:
+    CTkSegmentedButton only exposes one shared text_color for every segment (so
+    the selected segment's bright fill and the unselected ones can never both
+    have good text contrast), and a 3+ option segmented button was also observed
+    to render completely blank on this Tk build even though its internal state
+    was correct.
     """
     row = ctk.CTkFrame(parent, fg_color="transparent")
-    row.pack(fill="x", pady=8)
+    row.pack(fill="x", pady=10)
     ctk.CTkLabel(row, text=label, font=font_body, text_color=TEXT).pack(anchor="w")
 
+    # anchor="w" (not fill="x"): the button group sits at its own natural width
+    # instead of being stretched across the whole panel -- a 2-3 word choice
+    # spanning ~900px read as a thin, oddly-proportioned bar.
     btn_row = ctk.CTkFrame(row, fg_color="transparent")
-    btn_row.pack(fill="x", pady=(4, 0))
+    btn_row.pack(anchor="w", pady=(6, 0))
 
     buttons = {}
 
@@ -244,9 +253,13 @@ def _make_choice_row(parent, label, values, initial, font_body, command=None):
         choice._value = value
         for v, btn in buttons.items():
             if v == value:
-                btn.configure(fg_color=AMBER, text_color=PANEL, border_color=AMBER)
+                # Selected: a subtle accent-tinted fill + colored border/text --
+                # not a solid block of bright color, which read as low-contrast
+                # (near-white text on bright amber) and "not modern". Matches the
+                # border-highlight language the outline buttons use elsewhere.
+                btn.configure(fg_color=_mix(PANEL, AMBER, 0.28), text_color=AMBER, border_color=AMBER)
             else:
-                btn.configure(fg_color=PANEL, text_color=TEXT, border_color=BORDER)
+                btn.configure(fg_color=PANEL, text_color=TEXT_MUTED, border_color=BORDER)
 
     def select(value):
         # Only user clicks notify `command` -- matches CTkSegmentedButton, whose
@@ -256,8 +269,11 @@ def _make_choice_row(parent, label, values, initial, font_body, command=None):
             command(value)
 
     for i, value in enumerate(values):
-        btn = _make_outline_button(btn_row, value, AMBER, lambda v=value: select(v), font_body, width=200, height=36)
-        btn.pack(side="left", expand=True, fill="x", padx=(0 if i == 0 else 4, 0))
+        # Width follows each option's own text instead of one fixed width for
+        # every row -- "DQN" and "Continue Existing" need very different sizes.
+        width = max(110, 40 + len(value) * 10)
+        btn = _make_outline_button(btn_row, value, AMBER, lambda v=value: select(v), font_body, width=width, height=44)
+        btn.pack(side="left", padx=(0 if i == 0 else 8, 0))
         buttons[value] = btn
 
     choice = _Choice(apply_visual, buttons)
@@ -340,7 +356,7 @@ class HomeScreen(ctk.CTkFrame):
         super().__init__(parent, fg_color=BG)
         self.app = app
 
-        ctk.CTkLabel(self, text="SNAKE RL — LAUNCHER", font=app.font_h1, text_color=TEXT).pack(pady=(60, 14))
+        ctk.CTkLabel(self, text="SNAKE REINFORCEMENT LEARNING LAUNCHER", font=app.font_h1, text_color=TEXT).pack(pady=(60, 14))
         ctk.CTkFrame(self, fg_color=AMBER, width=120, height=2, corner_radius=0).pack(pady=(0, 14))
         ctk.CTkLabel(self, text="Choose a mode", font=app.font_body, text_color=TEXT_MUTED).pack(pady=(0, 10))
 
@@ -405,14 +421,14 @@ class SubScreen(ctk.CTkFrame):
         self.log_box = None
         self._log_queue = queue.Queue()
 
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=24, pady=(20, 10))
+        self.header = ctk.CTkFrame(self, fg_color="transparent")
+        self.header.pack(fill="x", padx=24, pady=(20, 10))
 
         _make_outline_button(
-            header, "← Back", TEXT_MUTED, lambda: self._handle_back(), app.font_body, width=90, height=36,
+            self.header, "← Back", TEXT_MUTED, lambda: self._handle_back(), app.font_body, width=90, height=36,
         ).pack(side="left")
 
-        ctk.CTkLabel(header, text=title, font=app.font_h2, text_color=TEXT).pack(side="left", padx=20)
+        ctk.CTkLabel(self.header, text=title, font=app.font_h2, text_color=TEXT).pack(side="left", padx=20)
 
         self.body = ctk.CTkFrame(self, fg_color="transparent")
         self.body.pack(fill="both", expand=True, padx=24, pady=(0, 24))
@@ -420,6 +436,32 @@ class SubScreen(ctk.CTkFrame):
     def _handle_back(self):
         """Overridden by screens that need to guard navigating away (e.g. Train Model mid-run)."""
         self.app.show("HomeScreen")
+
+    def min_required_height(self):
+        """
+        The real minimum window height this screen needs: every always-visible
+        child of self.body measured via winfo_reqheight() (not guessed), plus
+        MIN_FLEX_HEIGHT for whichever single child is the expandable one (a
+        CTkScrollableFrame's list, or a log box) -- so the expandable region
+        can shrink down to a still-functional sliver but never to 0px, and this
+        number automatically grows if a screen ever gains more always-visible
+        controls instead of silently going stale like a hand-picked constant.
+        """
+        self.update_idletasks()
+
+        def pad_total(value):
+            if isinstance(value, (tuple, list)):
+                return sum(int(v) for v in value)
+            return int(value) * 2
+
+        total = self.header.winfo_reqheight() + pad_total(self.header.pack_info().get("pady", 0))
+        total += pad_total(self.body.pack_info().get("pady", 0))
+        for child in self.body.winfo_children():
+            info = child.pack_info()
+            if info.get("expand"):
+                continue
+            total += child.winfo_reqheight() + pad_total(info.get("pady", 0))
+        return total + MIN_FLEX_HEIGHT + 20
 
     def _make_log_box(self, parent):
         self.log_box = ctk.CTkTextbox(
@@ -496,8 +538,8 @@ class PlayScreen(SubScreen):
     def __init__(self, parent, app):
         super().__init__(parent, app, "PLAY YOURSELF")
 
-        form = ctk.CTkFrame(self.body, fg_color="transparent")
-        form.pack(fill="x", pady=(4, 16))
+        form = _make_content_column(self.body)
+        form.pack(pady=(4, 16))
 
         self.width_var = _make_slider_row(form, "Grid width", 10, 80, 5, 30, app.font_body)
         self.height_var = _make_slider_row(form, "Grid height", 10, 60, 5, 20, app.font_body)
@@ -508,10 +550,14 @@ class PlayScreen(SubScreen):
             font=app.font_small, text_color=TEXT_MUTED,
         ).pack(pady=(0, 14))
 
-        self.start_btn = _make_outline_button(self.body, "Start Game", GREEN, self._start, app.font_body, width=200, height=44)
-        self.start_btn.pack(pady=(0, 16))
+        # Log box packed (bottom-most) before the button (which then stacks above
+        # it) so the log always claims its own space from the window's bottom
+        # edge first, instead of being the first thing clipped on a small window.
+        log_box = self._make_log_box(self.body)
+        log_box.pack(side="bottom", fill="both", expand=True)
 
-        self._make_log_box(self.body).pack(fill="both", expand=True)
+        self.start_btn = _make_outline_button(self.body, "Start Game", GREEN, self._start, app.font_body, width=200, height=44)
+        self.start_btn.pack(side="bottom", pady=(0, 16))
 
     def _start(self):
         self._start_background(
@@ -533,8 +579,23 @@ class TestModelScreen(SubScreen):
 
         models = _discover_models()
 
+        # Packed with side="bottom" (bottom-most to topmost: log box, start
+        # button, controls) so they always claim their own space first; only
+        # list_frame (which has its own internal scrollbar) flexes/shrinks.
+        log_box = self._make_log_box(self.body)
+        log_box.pack(side="bottom", fill="both", expand=False)
+
+        self.start_btn = _make_outline_button(self.body, "Start Test", AMBER, self._start, app.font_body, width=200, height=44)
+        self.start_btn.configure(state="disabled")
+        self.start_btn.pack(side="bottom", pady=(10, 16))
+
+        controls = _make_content_column(self.body)
+        self.mode_seg = _make_choice_row(controls, "Playback", ["Deterministic", "Stochastic"], "Deterministic", app.font_body)
+        self.speed_var = _make_slider_row(controls, "Speed", 1, 5, 1, 3, app.font_body, value_fmt=_speed_label)
+        controls.pack(side="bottom", pady=(12, 0))
+
         list_frame = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS)
-        list_frame.pack(fill="both", expand=True)
+        list_frame.pack(side="top", fill="both", expand=True)
 
         if not models:
             ctk.CTkLabel(
@@ -544,17 +605,6 @@ class TestModelScreen(SubScreen):
         for info in models:
             self._make_model_card(list_frame, info).pack(fill="x", pady=6)
         _enable_mousewheel(list_frame)
-
-        controls = ctk.CTkFrame(self.body, fg_color="transparent")
-        controls.pack(fill="x", pady=(12, 0))
-        self.mode_seg = _make_segmented_row(controls, "Playback", ["Deterministic", "Stochastic"], "Deterministic", app.font_body)
-        self.speed_var = _make_slider_row(controls, "Speed", 1, 5, 1, 3, app.font_body, value_fmt=_speed_label)
-
-        self.start_btn = _make_outline_button(self.body, "Start Test", AMBER, self._start, app.font_body, width=200, height=44)
-        self.start_btn.configure(state="disabled")
-        self.start_btn.pack(pady=(10, 16))
-
-        self._make_log_box(self.body).pack(fill="both", expand=False)
 
     def _make_model_card(self, parent, info):
         frame = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=RADIUS, border_width=2, border_color=BORDER)
@@ -641,22 +691,21 @@ class TrainModelScreen(SubScreen):
         self._cancel_event = None
         self._discard_event = None
 
-        self.train_mode_seg = _make_segmented_row(
+        self.train_mode_seg = _make_choice_row(
             self.body, "Train", ["New Model", "Continue Existing"], "New Model", app.font_body,
             command=self._on_train_mode_change,
         )
 
-        self.scroll = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS, height=170)
-        self.scroll.pack(fill="both", expand=True, pady=(8, 0))
+        # Build the log box, start/cancel button, and shared controls without
+        # packing them into self.body yet: they get packed with side="bottom"
+        # below (in bottom-to-top order) so they always claim their own space
+        # first, no matter how small the window gets -- only self.scroll (the
+        # form area, which has its own internal scrollbar) is left to shrink.
+        log_box = self._make_log_box(self.body)
 
-        self.new_panel = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        self.continue_panel = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        self._build_new_panel(self.new_panel)
-        self._build_continue_panel(self.continue_panel)
-        self.new_panel.pack(fill="both", expand=True)
+        self.start_btn = _make_outline_button(self.body, "Start Training", RED, self._start, app.font_body, width=220, height=44)
 
-        shared = ctk.CTkFrame(self.body, fg_color="transparent")
-        shared.pack(fill="x", pady=(8, 0))
+        shared = _make_content_column(self.body)
         self.timesteps_entry = _make_entry_row(shared, "Timesteps", 3_000_000, app.font_body)
         cpu_count = os.cpu_count() or 4
         self.num_envs_var = _make_slider_row(shared, "Parallel environments", 1, cpu_count, 1, min(4, cpu_count), app.font_body)
@@ -668,14 +717,18 @@ class TrainModelScreen(SubScreen):
         )
         self.tuned_checkbox.pack(anchor="w", pady=(8, 4))
 
-        self.start_btn = _make_outline_button(self.body, "Start Training", RED, self._start, app.font_body, width=220, height=44)
-        self.start_btn.pack(pady=(12, 16))
+        log_box.pack(side="bottom", fill="both", expand=False)
+        self.start_btn.pack(side="bottom", pady=(12, 16))
+        shared.pack(side="bottom", pady=(8, 0))
 
-        # expand=False (fixed height): only self.scroll above should flex with the
-        # window -- it already has its own scrollbar, so shrinking it just means
-        # scrolling the form, whereas the log has nowhere else to go and used to
-        # get squeezed to near-nothing unless the window was maximized.
-        self._make_log_box(self.body).pack(fill="both", expand=False)
+        self.scroll = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS, height=170)
+        self.scroll.pack(side="top", fill="both", expand=True, pady=(8, 0))
+
+        self.new_panel = _make_content_column(self.scroll)
+        self.continue_panel = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        self._build_new_panel(self.new_panel)
+        self._build_continue_panel(self.continue_panel)
+        self.new_panel.pack(fill="y", expand=True)
 
         self._on_algo_change("DQN")
         self._check_collision()
@@ -685,8 +738,8 @@ class TrainModelScreen(SubScreen):
     # --- "New Model" panel ---------------------------------------------------
 
     def _build_new_panel(self, parent):
-        self.algo_seg = _make_segmented_row(parent, "Algorithm", ["DQN", "PPO"], "DQN", self.app.font_body, command=self._on_new_config_change)
-        self.obs_seg = _make_segmented_row(parent, "Observation mode", ["FLAT", "GRID"], "FLAT", self.app.font_body, command=self._on_new_config_change)
+        self.algo_seg = _make_choice_row(parent, "Algorithm", ["DQN", "PPO"], "DQN", self.app.font_body, command=self._on_new_config_change)
+        self.obs_seg = _make_choice_row(parent, "Observation mode", ["FLAT", "GRID"], "FLAT", self.app.font_body, command=self._on_new_config_change)
         self.grid_seg = _make_choice_row(parent, "Grid size", [p[0] for p in self.GRID_PRESETS], self.GRID_PRESETS[0][0], self.app.font_body, command=self._on_new_config_change)
         self.fov_var = _make_slider_row(parent, "FOV radius", 1, 8, 1, 3, self.app.font_body, on_change=self._on_new_config_change)
 
@@ -754,9 +807,9 @@ class TrainModelScreen(SubScreen):
         self._continue_cards_by_path = {}
         self._refresh_continue_models()
 
-        row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", pady=(8, 0))
-        self.continue_checkpoint_seg = _make_segmented_row(row, "Resume from", ["Best", "Last"], "Best", self.app.font_body)
+        row = _make_content_column(parent)
+        row.pack(pady=(8, 0))
+        self.continue_checkpoint_seg = _make_choice_row(row, "Resume from", ["Best", "Last"], "Best", self.app.font_body)
         self.continue_checkpoint_seg.configure(state="disabled")
 
     def _refresh_continue_models(self):
@@ -842,7 +895,7 @@ class TrainModelScreen(SubScreen):
     def _on_train_mode_change(self, mode):
         if mode == "New Model":
             self.continue_panel.pack_forget()
-            self.new_panel.pack(fill="both", expand=True)
+            self.new_panel.pack(fill="y", expand=True)
             self._on_algo_change(self.algo_seg.get())
             self._check_collision()
         else:
@@ -979,27 +1032,32 @@ class App(ctk.CTk):
         super().__init__()
 
         self.title("Snake RL — Launcher")
-        # Tall enough that Train Model's log panel is visible by default without
-        # maximizing: CTkScrollableFrame pins its own canvas to a fixed height
-        # (its `height=` constructor arg) regardless of pack(expand=True), so the
-        # form area doesn't actually shrink to make room -- the window has to be
-        # tall enough up front instead.
-        self.geometry("960x800")
-        self.minsize(780, 600)
+
+        # Start at the same ~2/3 fraction of the screen that an HD (1280x720)
+        # window occupies on a Full HD (1920x1080) display, in a 16:9 ratio --
+        # scales proportionally on any monitor instead of a fixed pixel size
+        # (tiny on 4K, cramped on a small laptop) and doesn't fill the screen.
+        # Derived from screen *height* only (not width): side-by-side multi-monitor
+        # setups sum widths into one wide virtual desktop but keep a real height,
+        # so sizing off height avoids computing a giant window spanning monitors.
+        # No explicit +x+y either, for the same reason -- the window manager
+        # places/centers new windows on the actual active monitor far more
+        # reliably than we could from Tk's combined virtual-desktop coordinates.
+        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        target_h = max(int(screen_h * (720 / 1080)), 600)
+        target_w = min(int(target_h * 16 / 9), screen_w)
+        self.geometry(f"{target_w}x{target_h}")
+        self.minsize(MIN_WIDTH, 600)
         self.configure(fg_color=BG)
 
         # Only one background action (play/test/train) may run at a time.
         self.busy = False
 
-        # Monospace throughout: this Python's Tk build has no FreeType/Xft linkage
-        # at all (verified via ldd), so it can't antialias *any* TTF outline font --
-        # every family looks equally blocky. A monospace "terminal" font at least
-        # reads as an intentional retro-arcade look instead of a broken sans-serif.
-        self.font_h1 = ctk.CTkFont(family="DejaVu Sans Mono", size=26, weight="bold")
-        self.font_h2 = ctk.CTkFont(family="DejaVu Sans Mono", size=18, weight="bold")
-        self.font_card_title = ctk.CTkFont(family="DejaVu Sans Mono", size=18, weight="bold")
-        self.font_body = ctk.CTkFont(family="DejaVu Sans Mono", size=13)
-        self.font_small = ctk.CTkFont(family="DejaVu Sans Mono", size=12)
+        self.font_h1 = ctk.CTkFont(family="Noto Sans", size=30, weight="bold")
+        self.font_h2 = ctk.CTkFont(family="Noto Sans", size=22, weight="bold")
+        self.font_card_title = ctk.CTkFont(family="Noto Sans", size=20, weight="bold")
+        self.font_body = ctk.CTkFont(family="Noto Sans", size=15)
+        self.font_small = ctk.CTkFont(family="Noto Sans", size=13)
         self.font_mono = self.font_body
 
         container = ctk.CTkFrame(self, fg_color=BG)
@@ -1015,7 +1073,18 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
     def show(self, name):
-        self.screens[name].tkraise()
+        screen = self.screens[name]
+        screen.tkraise()
+        if isinstance(screen, SubScreen):
+            # Measured, not guessed: keeps whatever's expandable in this screen
+            # (a scrollable list, or a log box) from ever collapsing to 0px, and
+            # grows the window immediately if it's currently smaller than that --
+            # switching to a more demanding screen never leaves a clipped layout.
+            req_h = screen.min_required_height()
+            self.minsize(MIN_WIDTH, req_h)
+            cur_w, cur_h = self.winfo_width(), self.winfo_height()
+            if cur_w < MIN_WIDTH or cur_h < req_h:
+                self.geometry(f"{max(cur_w, MIN_WIDTH)}x{max(cur_h, req_h)}")
 
     def _on_close_request(self):
         # Closing the window kills every background daemon thread outright (no
