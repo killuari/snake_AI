@@ -18,6 +18,7 @@ from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 from DQN_hyper_tuning import run_hyperparameter_optimization, load_best_params
 from custom_callback import DeathLogger
+from feature_extractors import SnakeCombinedExtractor
 import os
 import json
 import numpy as np
@@ -31,13 +32,13 @@ PPO_PATH = os.path.join("Training", "Saved Models", "PPO")
 DQN_PATH = os.path.join("Training", "Saved Models", "DQN")
 
 
-def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_fov_radius, n_episodes=10):
+def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_fov_radius, obs_mode="flat", n_episodes=10):
     """
     Run n_episodes deterministic and n_episodes stochastic episodes (no rendering,
     no reward shaping) and return the mean "clean" score (apples eaten) for each,
     the same score shown by test_model().
     """
-    env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode=None, training=False)
+    env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode=None, training=False, obs_mode=obs_mode)
     results = {}
     for label, deterministic in [("deterministic", True), ("stochastic", False)]:
         scores = []
@@ -56,7 +57,7 @@ def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_
     return results
 
 
-def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=500_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False):
+def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=500_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False, use_cnn=False):
     """
     Train a DQN or PPO agent on the Snake environment.
 
@@ -77,23 +78,31 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         use_tuned_params: If True and params is None (DQN only), load hyperparameters
                           previously found by DQN_hyper_tuning.run_hyperparameter_optimization()
                           instead of using the hardcoded defaults.
+        use_cnn:          If True, use the "grid" observation mode (2D FOV + apple direction)
+                          with a custom CNN feature extractor (SnakeCombinedExtractor) instead
+                          of the flat MultiDiscrete + MlpPolicy setup. Saved under a separate
+                          "GRID" folder, incompatible with "FLAT" (MLP) models.
     """
+    obs_mode = "grid" if use_cnn else "flat"
+    policy = "MultiInputPolicy" if use_cnn else "MlpPolicy"
+    policy_kwargs = {"features_extractor_class": SnakeCombinedExtractor} if use_cnn else None
+
     # Create parallel training environments (one per subprocess)
-    train_env = SubprocVecEnv([make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius) for _ in range(num_envs)])
+    train_env = SubprocVecEnv([make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, obs_mode=obs_mode) for _ in range(num_envs)])
 
     # Create a single evaluation environment with a step limit to prevent infinite episodes.
     # training=False disables reward shaping/penalties, so EvalCallback's mean_reward
     # reflects the clean score (apples eaten) instead of being mixed with training-only
     # shaping terms.
-    raw_eval_env = SnakeGameEnvironment(GRID_SIZE, grid_width, grid_height, snake_fov_radius, training=False)
+    raw_eval_env = SnakeGameEnvironment(GRID_SIZE, grid_width, grid_height, snake_fov_radius, training=False, obs_mode=obs_mode)
     raw_eval_env = TimeLimit(raw_eval_env, max_episode_steps=10000)
     eval_env = Monitor(raw_eval_env, filename=None)
 
     if model_name == "DQN":
-        # Build the save/load path based on grid size and FOV
-        path = os.path.join(DQN_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
+        # Build the save/load path based on obs_mode, grid size, and FOV
+        path = os.path.join(DQN_PATH, "GRID" if use_cnn else "FLAT", f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
-            # Resume training from a saved model
+            # Resume training from a saved model (policy/feature-extractor are restored from the checkpoint)
             model = DQN.load(os.path.join(path, "best_model" if best else "last_model"), train_env, device='cpu', verbose=1)
         else:
             # Default DQN hyperparameters, or previously tuned ones from Optuna
@@ -116,7 +125,8 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                     }
 
             model = DQN(
-                "MlpPolicy", train_env,
+                policy, train_env,
+                policy_kwargs = policy_kwargs,
                 learning_rate = params["learning_rate"],
                 buffer_size = params["buffer_size"],
                 learning_starts = params["learning_starts"],
@@ -132,14 +142,15 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
             )
     else:
         # PPO branch
-        path = os.path.join(PPO_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
+        path = os.path.join(PPO_PATH, "GRID" if use_cnn else "FLAT", f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
             model = PPO.load(path=os.path.join(path, "best_model" if best else "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True)
 
             print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps) [from Path: {path}]")
         else:
             model = PPO(
-                "MlpPolicy", train_env,
+                policy, train_env,
+                policy_kwargs = policy_kwargs,
                 n_steps=5000,          # Steps per rollout before policy update
                 batch_size=250,        # Minibatch size for PPO updates
                 device='cpu', verbose=1
@@ -177,20 +188,20 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # at a glance without manually testing the model.
     evaluation = {
         "timesteps": timesteps,
-        "last_model": evaluate_model_performance(model, GRID_SIZE, grid_width, grid_height, snake_fov_radius),
+        "last_model": evaluate_model_performance(model, GRID_SIZE, grid_width, grid_height, snake_fov_radius, obs_mode=obs_mode),
     }
 
     best_model_path = os.path.join(path, "best_model.zip")
     if os.path.exists(best_model_path):
         ModelClass = DQN if model_name == "DQN" else PPO
         best = ModelClass.load(os.path.join(path, "best_model"), device="cpu")
-        evaluation["best_model"] = evaluate_model_performance(best, GRID_SIZE, grid_width, grid_height, snake_fov_radius)
+        evaluation["best_model"] = evaluate_model_performance(best, GRID_SIZE, grid_width, grid_height, snake_fov_radius, obs_mode=obs_mode)
 
     with open(os.path.join(path, "evaluation.json"), "w") as file:
         json.dump(evaluation, file, indent=4)
 
 
-def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=1):
+def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=1, use_cnn=False):
     """
     Load a trained model and watch it play in a Pygame window.
 
@@ -199,14 +210,18 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
         grid_width:       Grid width (must match the model's training config).
         grid_height:      Grid height (must match the model's training config).
         snake_fov_radius: FOV radius (must match the model's training config).
+        use_cnn:          Must match the obs_mode/policy the model was trained with.
     """
+    obs_mode = "grid" if use_cnn else "flat"
+    obs_mode_dir = "GRID" if use_cnn else "FLAT"
+
     # Create environment with human rendering (opens Pygame window)
-    env = make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, "human", training=False)()
+    env = make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, "human", training=False, obs_mode=obs_mode)()
 
     if model_name == "DQN":
-        model = DQN.load(os.path.join(DQN_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env, device="cpu")
+        model = DQN.load(os.path.join(DQN_PATH, obs_mode_dir, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env, device="cpu")
     else:
-        load_path = os.path.join(PPO_PATH, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model")
+        load_path = os.path.join(PPO_PATH, obs_mode_dir, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model")
         model = PPO.load(load_path, env, device="cpu")
         print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps)\n[from Path: {load_path}]")
 

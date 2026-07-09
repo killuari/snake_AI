@@ -1,5 +1,5 @@
 """
-DQN_hyper_tuning.py — Automated Hyperparameter Optimization for DQN
+DQN_hyper_tuning.py - Automated Hyperparameter Optimization for DQN
 
 Uses Optuna (Bayesian optimization with TPE sampler) to search for optimal
 DQN hyperparameters. Each trial trains a DQN agent for a short period and

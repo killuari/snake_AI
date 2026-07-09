@@ -1,15 +1,15 @@
 """
-snake_game.py — Core Snake Game Engine (Pygame)
+snake_game.py - Core Snake Game Engine (Pygame)
 
 This module contains the pure game logic for a classic Snake game.
 It is independent of any AI/RL framework and can be played standalone
 by running this file directly (WASD controls).
 
 Classes:
-    Direction — Enum for movement directions with helper methods.
-    SnakeGame — Main game controller managing the snake, apple, and score.
-    SnakePart  — A single segment of the snake body.
-    Apple      — The food item that the snake tries to eat.
+    Direction - Enum for movement directions with helper methods.
+    SnakeGame - Main game controller managing the snake, apple, and score.
+    SnakePart  - A single segment of the snake body.
+    Apple      - The food item that the snake tries to eat.
 """
 
 from cuda.bindings.utils import Any
@@ -19,7 +19,7 @@ import numpy as np
 from enum import Enum
 
 # Default grid configuration used when running this file standalone.
-# These are NOT used by the RL environment — it passes its own values.
+# These are NOT used by the RL environment - it passes its own values.
 GRID_SIZE = 30       # Size of each grid cell in pixels
 GRID_WIDTH = 50      # Number of cells horizontally
 GRID_HEIGHT = 30     # Number of cells vertically
@@ -219,7 +219,7 @@ class SnakePart:
     def move(self, dir: Direction) -> bool:
         """
         Move this segment one grid cell in the given direction.
-        Only used for the head segment — body parts are moved via position cascading.
+        Only used for the head segment - body parts are moved via position cascading.
 
         Args:
             dir: The Direction to move.

@@ -1,10 +1,11 @@
 """
-snake_game_environment.py — Gymnasium Environment Wrapper for the Snake Game
+snake_game_environment.py - Gymnasium Environment Wrapper for the Snake Game
 
 Wraps SnakeGame into a gym.Env for RL training with Stable Baselines3.
-Uses a local FOV observation so models generalize across grid sizes.
+Uses a local FOV observation (plus the apple's direction) so models
+generalize across grid sizes.
 
-Observation encoding: 0=empty, 1=body, 2=apple, 3=wall.
+FOV cell encoding: 0=empty, 1=body, 2=apple, 3=wall.
 """
 
 import warnings
@@ -24,8 +25,9 @@ class SnakeGameEnvironment(gym.Env):
     """
     Gymnasium environment wrapping the Snake game for RL training.
 
-    Observation: MultiDiscrete array of the local FOV around the head.
-    Action: Discrete(4) — 0=RIGHT, 1=DOWN, 2=LEFT, 3=UP.
+    Observation: local FOV around the head plus the apple's direction, in one
+    of two layouts (see `obs_mode`).
+    Action: Discrete(4) - 0=RIGHT, 1=DOWN, 2=LEFT, 3=UP.
 
     Args:
         grid_size: Pixel size of each cell.
@@ -33,15 +35,20 @@ class SnakeGameEnvironment(gym.Env):
         snake_fov_radius: FOV radius around head ((2r+1)^2 - 1 cells).
         render_mode: None, "human", or "rgb_array".
         training: If True, apply reward shaping (penalties). False for eval.
+        obs_mode: "flat" - MultiDiscrete vector for an MlpPolicy (default).
+                  "grid" - Dict({"grid": Box(4,2r+1,2r+1), "apple_dir": MultiDiscrete([3,3])})
+                           for a CNN-based policy that keeps the FOV's 2D structure.
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True):
+    def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True, obs_mode = "flat"):
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
         self.snake_fov_radius = snake_fov_radius
         self.training = training
+        assert obs_mode in ("flat", "grid")
+        self.obs_mode = obs_mode
 
         self.snakeGame = None          # Created on reset()
 
@@ -55,9 +62,16 @@ class SnakeGameEnvironment(gym.Env):
         self.tail_locations = []
         self.dir = None
 
-        # Observation: one int per FOV cell (excl. head). Values: 0-3
+        # Observation: FOV cells (excl. head, values 0-3) + apple direction (2 values, 0-2).
         n_cells = (2*self.snake_fov_radius + 1)**2 - 1
-        self.observation_space = gym.spaces.MultiDiscrete([4] * n_cells)
+        if self.obs_mode == "flat":
+            self.observation_space = gym.spaces.MultiDiscrete([4] * n_cells + [3, 3])
+        else:
+            fov_side = 2*self.snake_fov_radius + 1
+            self.observation_space = gym.spaces.Dict({
+                "grid": gym.spaces.Box(low=0, high=1, shape=(4, fov_side, fov_side), dtype=np.uint8),
+                "apple_dir": gym.spaces.MultiDiscrete([3, 3]),
+            })
 
         # 4 discrete actions
         self.action_space = gym.spaces.Discrete(4)
@@ -84,9 +98,25 @@ class SnakeGameEnvironment(gym.Env):
         else:
             return 0      # Empty
 
+    def _apple_direction(self):
+        """Sign of the apple's offset from the head, mapped from {-1,0,1} to {0,1,2}
+        per axis. Scale-invariant (direction only, no distance), so it doesn't
+        depend on grid size, and gives the agent a signal towards the apple even
+        when it is outside the FOV."""
+        hx, hy = self.head_location
+        ax, ay = self.apple_location
+        return int(np.sign(ax - hx)) + 1, int(np.sign(ay - hy)) + 1
+
     def _get_obs(self):
-        """Build observation array from current game state.
-        Scans FOV around head. Each cell: 0=empty, 1=body, 2=apple, 3=wall."""
+        """Build the observation from the current game state, in whichever
+        layout `obs_mode` selects."""
+        if self.obs_mode == "flat":
+            return self._get_obs_flat()
+        return self._get_obs_grid()
+
+    def _get_obs_flat(self):
+        """Flat vector: FOV cells (0=empty, 1=body, 2=apple, 3=wall) followed by
+        the apple direction (dx_sign, dy_sign)."""
         locations = []
         hx, hy = self.head_location
 
@@ -97,10 +127,35 @@ class SnakeGameEnvironment(gym.Env):
 
                 loc = np.array([hx + dx, hy + dy])
                 classification = self.classify_cell(loc)
-                
+
                 locations.append(classification)
 
+        dx_sign, dy_sign = self._apple_direction()
+        locations.append(dx_sign)
+        locations.append(dy_sign)
+
         return np.array(locations)
+
+    def _get_obs_grid(self):
+        """2D one-hot FOV grid (4 channels: empty/body/apple/wall) plus the
+        apple direction as a separate small vector, for a CNN-based policy.
+        The head's own cell is left all-zero across every channel (it is
+        always exactly the center of the grid)."""
+        fov_side = 2*self.snake_fov_radius + 1
+        grid = np.zeros((4, fov_side, fov_side), dtype=np.uint8)
+        hx, hy = self.head_location
+
+        for dy in range(-self.snake_fov_radius, self.snake_fov_radius + 1):
+            for dx in range(-self.snake_fov_radius, self.snake_fov_radius + 1):
+                if dx == 0 and dy == 0:
+                    continue  # Head cell stays all-zero
+
+                loc = np.array([hx + dx, hy + dy])
+                classification = self.classify_cell(loc)
+                grid[classification, dy + self.snake_fov_radius, dx + self.snake_fov_radius] = 1
+
+        dx_sign, dy_sign = self._apple_direction()
+        return {"grid": grid, "apple_dir": np.array([dx_sign, dy_sign])}
     
     def _get_info(self) -> dict:
         """Return auxiliary info dict with current snake length."""
@@ -259,11 +314,11 @@ class SnakeGameEnvironment(gym.Env):
             pygame.quit()
 
 
-def make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True):
+def make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True, obs_mode = "flat"):
     """Factory returning a callable that creates a Monitor-wrapped environment.
     Required by SubprocVecEnv (one callable per subprocess)."""
     def _init():
-        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode, training)
+        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode, training, obs_mode)
         env = Monitor(env, filename=None)
         return env
     return _init

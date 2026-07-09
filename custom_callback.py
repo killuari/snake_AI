@@ -1,11 +1,11 @@
 """
-custom_callback.py — Custom Stable Baselines3 Callbacks for Training Monitoring
+custom_callback.py - Custom Stable Baselines3 Callbacks for Training Monitoring
 
 Provides callbacks that hook into the SB3 training loop to log additional
 metrics beyond the standard reward/episode-length tracking.
 
 Classes:
-    DeathLogger — Tracks death causes (max-step timeout vs. collision) and
+    DeathLogger - Tracks death causes (max-step timeout vs. collision) and
                   reports percentages every 100k timesteps.
 """
 
