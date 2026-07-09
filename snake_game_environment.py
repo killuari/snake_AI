@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
 import pygame
 import gymnasium as gym
 import numpy as np
+import random
 from typing import Optional
 from stable_baselines3.common.monitor import Monitor
 
@@ -101,7 +102,7 @@ class SnakeGameEnvironment(gym.Env):
 
         return np.array(locations)
     
-    def _get_info(self):
+    def _get_info(self) -> dict:
         """Return auxiliary info dict with current snake length."""
         if self.snakeGame is None:
             return {"snake_length": 0}
@@ -123,6 +124,8 @@ class SnakeGameEnvironment(gym.Env):
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         """Reset to a fresh game. Returns (observation, info)."""
         super().reset(seed=seed, options=options)
+        if seed is not None:
+            random.seed(seed)  # SnakeGame/Apple use the global `random` module
 
         self.snakeGame = SnakeGame(self.grid_size, self.grid_width, self.grid_height)
         self.dir = Direction.RIGHT     # Always start facing right
@@ -144,14 +147,20 @@ class SnakeGameEnvironment(gym.Env):
 
         Reward (training mode only):
             +1.0 for eating apple (resets step counter).
-            -0.5 for exceeding max_steps (anti-loop, terminates).
-            -min(20, max(1, (length-3)*0.5)) for death (scales with length).
+            -0.5 for exceeding max_steps (anti-loop, truncates).
+            -min(20, max(1, (length-3)*0.5)) for death (scales with length, terminates).
 
-        Returns: (observation, reward, terminated, truncated=False, info)
+        The anti-loop timeout is a `truncated` event (an artificial cutoff, not
+        a real game-over), while a wall/self collision is a `terminated` event
+        (a genuine terminal state). Keeping this distinction lets SB3 bootstrap
+        the value of the cutoff state correctly instead of treating it as an
+        absorbing terminal state with zero future value.
+
+        Returns: (observation, reward, terminated, truncated, info)
         """
         if self.snakeGame is None:
             raise RuntimeError("Call reset() before step().")
-        
+
         if self.dir is None:
             raise RuntimeError("Direction not initialized. Call reset() first.")
 
@@ -162,12 +171,14 @@ class SnakeGameEnvironment(gym.Env):
 
         reward = 0
         terminated = False
+        truncated = False
+        death_cause = None
         self.steps += 1
         snake_length = len(self.snakeGame.snake_list)
 
         alive = self.snakeGame.move_snake(self.dir)
         apple_eaten = self.snakeGame.eat_apple()
-        
+
         # Max steps before timeout = 2/3 of total grid cells
         max_steps = 2/3 * (self.grid_width * self.grid_height)
 
@@ -175,11 +186,13 @@ class SnakeGameEnvironment(gym.Env):
             reward = 1
             self.steps = 0             # Reset after eating
         elif self.steps >= max_steps and self.training:
+            truncated = True           # Anti-loop cutoff, not a real game-over
+            death_cause = "timeout"
             reward = -0.5              # Anti-loop penalty
-            terminated = True
 
         if not alive:
             terminated = True
+            death_cause = "collision"
             if self.training:
                 # Death penalty scaled by snake length (min -1, max -20)
                 reward = -min(20, max(1, (snake_length-3) * 0.5))
@@ -188,11 +201,12 @@ class SnakeGameEnvironment(gym.Env):
 
         observation = self._get_obs()
         info = self._get_info()
+        info["death_cause"] = death_cause
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return observation, reward, terminated, False, info
+        return observation, reward, terminated, truncated, info
     
     def render(self):
         """Public render (Gymnasium API). Only returns data for rgb_array mode."""
@@ -225,8 +239,12 @@ class SnakeGameEnvironment(gym.Env):
             canvas.blit(score_display, (15, 15))
 
         if self.render_mode == "human" and self.screen is not None and self.clock is not None:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                    self.close()
+                    raise SystemExit
+
             self.screen.blit(canvas, (0, 0))
-            pygame.event.pump()        # Keep window responsive
             pygame.display.flip()
             self.clock.tick(self.metadata["render_fps"])
         else:

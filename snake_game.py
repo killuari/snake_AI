@@ -12,6 +12,8 @@ Classes:
     Apple      — The food item that the snake tries to eat.
 """
 
+from cuda.bindings.utils import Any
+from numpy.typing import NDArray
 import pygame, random
 import numpy as np
 from enum import Enum
@@ -104,7 +106,7 @@ class SnakeGame:
         self.apple = Apple(grid_size, grid_width, grid_height)
         self.apple.place([part.grid_pos for part in self.snake_list])
 
-    def get_tail_locations(self):
+    def get_tail_locations(self) -> list[NDArray[Any]]:
         """Return a list of grid positions for all body parts (excluding the head).
         Used by the RL environment to build the observation."""
         return [part.grid_pos for part in self.snake_list[1:]]
@@ -114,7 +116,7 @@ class SnakeGame:
         The new part will separate from the tail on the next move."""
         self.snake_list.append(SnakePart(self.grid_size, self.grid_width, self.grid_height, self.snake_list[-1].pos))
 
-    def move_snake(self, dir: Direction):
+    def move_snake(self, dir: Direction) -> bool:
         """
         Move the entire snake one step in the given direction.
 
@@ -149,7 +151,7 @@ class SnakeGame:
 
         return alive
 
-    def detect_collision(self):
+    def detect_collision(self) -> bool:
         """Check if the snake's head overlaps with any body segment.
         Returns True if a self-collision is detected."""
         for part in self.snake_list[1:]:
@@ -157,7 +159,7 @@ class SnakeGame:
                 return True
         return False
             
-    def eat_apple(self):
+    def eat_apple(self) -> bool:
         """
         Check if the snake's head is on the apple.
         If so, grow the snake by one segment, increment the score,
@@ -214,7 +216,7 @@ class SnakePart:
         """Draw this segment as a green rectangle on the given surface."""
         pygame.draw.rect(screen, pygame.Color(80, 220, 80), pygame.Rect(self.pos.x, self.pos.y, self.grid_size, self.grid_size))
 
-    def move(self, dir: Direction):
+    def move(self, dir: Direction) -> bool:
         """
         Move this segment one grid cell in the given direction.
         Only used for the head segment — body parts are moved via position cascading.
@@ -262,7 +264,7 @@ class Apple:
         self.grid_pos = np.array([-1, -1])       # Sentinel until place() is called
         self.pos = pygame.Vector2(-1, -1)
 
-    def place(self, occupied_cells):
+    def place(self, occupied_cells) -> bool:
         """
         Randomly place the apple on a free grid cell.
 

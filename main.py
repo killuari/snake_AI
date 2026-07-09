@@ -52,8 +52,11 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # Create parallel training environments (one per subprocess)
     train_env = SubprocVecEnv([make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius) for _ in range(num_envs)])
 
-    # Create a single evaluation environment with a step limit to prevent infinite episodes
-    raw_eval_env = SnakeGameEnvironment(GRID_SIZE, grid_width, grid_height, snake_fov_radius)
+    # Create a single evaluation environment with a step limit to prevent infinite episodes.
+    # training=False disables reward shaping/penalties, so EvalCallback's mean_reward
+    # reflects the clean score (apples eaten) instead of being mixed with training-only
+    # shaping terms.
+    raw_eval_env = SnakeGameEnvironment(GRID_SIZE, grid_width, grid_height, snake_fov_radius, training=False)
     raw_eval_env = TimeLimit(raw_eval_env, max_episode_steps=10000)
     eval_env = Monitor(raw_eval_env, filename=None)
 
