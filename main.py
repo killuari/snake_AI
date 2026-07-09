@@ -17,7 +17,7 @@ Usage:
 from snake_game import SnakeGame, Direction, draw_hud, COLOR_BACKGROUND
 from snake_game_environment import SnakeGameEnvironment, make_snake_env
 from stable_baselines3 import PPO, DQN
-from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold
+from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold, BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -99,7 +99,7 @@ def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_
     return results
 
 
-def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=3_000_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False, use_cnn=False):
+def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=3_000_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False, use_cnn=False, cancel_event=None, discard_event=None):
     """
     Train a DQN or PPO agent on the Snake environment.
 
@@ -126,6 +126,12 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                           with a custom CNN feature extractor (SnakeCombinedExtractor) instead
                           of the flat MultiDiscrete + MlpPolicy setup. Saved under a separate
                           "GRID" folder, incompatible with "FLAT" (MLP) models.
+        cancel_event:     Optional threading.Event. When set, training stops early (as if
+                          `timesteps` had been reached) -- the normal save/finalize/evaluate
+                          steps below still run against whatever was trained so far.
+        discard_event:    Optional threading.Event. When set (only meaningful together with
+                          cancel_event), the run is abandoned after stopping: nothing is saved
+                          or evaluated, unlike a plain cancel_event which keeps the partial result.
     """
     obs_mode = "grid" if use_cnn else "flat"
     policy = "MultiInputPolicy" if use_cnn else "MlpPolicy"
@@ -226,8 +232,21 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # Custom callback to log death causes (max-step vs collision)
     death_logger = DeathLogger()
 
+    callbacks = [eval_callback, death_logger]
+    if cancel_event is not None:
+        class _CancelCallback(BaseCallback):
+            def _on_step(self) -> bool:
+                return not cancel_event.is_set()
+        callbacks.append(_CancelCallback())
+
     # Start training
-    model.learn(total_timesteps=timesteps, callback=[eval_callback, death_logger], reset_num_timesteps=False)
+    model.learn(total_timesteps=timesteps, callback=callbacks, reset_num_timesteps=False)
+
+    if discard_event is not None and discard_event.is_set():
+        print("\nTraining cancelled -- discarding this run (nothing saved).")
+        train_env.close()
+        eval_env.close()
+        return
 
     # EvalCallback only evaluates every eval_freq calls, so the final stretch of
     # training (up to eval_freq-1 calls) may never have been checked -- evaluate
@@ -283,7 +302,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         json.dump(evaluation, file, indent=4)
 
 
-def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=1, use_cnn=False, fps=None):
+def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=1, use_cnn=False, fps=None, deterministic=True):
     """
     Load a trained model and watch it play in a Pygame window.
 
@@ -296,6 +315,9 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
         fps:              Playback speed (frames = model decisions per second).
                           Defaults to 50 if None. Lower it (e.g. 5-10) to follow
                           along move by move, raise it to skim through episodes.
+        deterministic:    If True (default), always pick the greedy action. If False,
+                          sample from the policy's action distribution instead (matches
+                          the "stochastic" evaluation mode in evaluate_model_performance()).
 
     Controls while watching: 'f' toggles a debug overlay showing the FOV the
     model observes and an arrow for the apple-direction observation; ESC or
@@ -320,12 +342,18 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
     done = False
     score = 0.0
 
-    # Run the agent until the episode ends
-    while not done:
-        action, _ = model.predict(obs, deterministic=True)   # Use greedy policy (no exploration)
-        obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        score += float(reward)
+    try:
+        # Run the agent until the episode ends
+        while not done:
+            action, _ = model.predict(obs, deterministic=deterministic)
+            obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            score += float(reward)
+    finally:
+        # Without this, the Pygame window is left open with a dead event loop once
+        # the episode ends (nothing calls pygame.event.get() again), so it can't
+        # even process its own close button anymore.
+        env.close()
 
     print(f"Ended with Score: {score}")
 
@@ -344,16 +372,19 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
     score = 0.0
     key_map = {"d": 0, "s": 1, "a": 2, "w": 3}  # RIGHT, DOWN, LEFT, UP
 
-    while not done:
-        raw = input("action: ")
-        if raw not in key_map:
-            print("Invalid input, please use w/a/s/d.")
-            continue
-        action = np.array(key_map[raw])
-        obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        score += float(reward)
-        print(obs)
+    try:
+        while not done:
+            raw = input("action: ")
+            if raw not in key_map:
+                print("Invalid input, please use w/a/s/d.")
+                continue
+            action = np.array(key_map[raw])
+            obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            score += float(reward)
+            print(obs)
+    finally:
+        env.close()
 
 
 def play_game(grid_width=30, grid_height=20, fps=10):
