@@ -94,7 +94,7 @@ def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake
     exploration_final_eps = trial.suggest_float("exploration_final_eps", 0.01, 0.1)
     
     # ── Create environment ──
-    from snake_game_environment import make_snake_env
+    from game.environment import make_snake_env
     env = SubprocVecEnv([make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius) for _ in range(num_envs)])
     
     try:
@@ -182,6 +182,7 @@ def run_hyperparameter_optimization(grid_size = 30, grid_width = 30, grid_height
         print(f"    {key}: {value}")
 
     # Save best parameters to JSON file
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, "w") as file:
         json.dump(study.best_params, file, indent=4)
         

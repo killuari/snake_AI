@@ -18,7 +18,7 @@ import random
 from typing import Optional
 from stable_baselines3.common.monitor import Monitor
 
-from snake_game import SnakeGame, Direction, COLOR_BACKGROUND, draw_hud
+from game.snake_game import SnakeGame, Direction, COLOR_BACKGROUND, draw_hud
 
 
 class SnakeGameEnvironment(gym.Env):

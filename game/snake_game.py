@@ -12,6 +12,17 @@ Classes:
     Apple      - The food item that the snake tries to eat.
 """
 
+# --- pygame startup hygiene (must run before `import pygame`) ---
+# The pygame C extension emits an AVX2 RuntimeWarning on CPUs whose wheel
+# wasn't built with AVX2, and pygame.pkgdata triggers a pkg_resources
+# deprecation UserWarning; neither is actionable here. Silence both (and the
+# support prompt) so the launcher starts with a clean console.
+import os
+import warnings
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+warnings.filterwarnings("ignore", message=r".*avx2.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=r".*pkg_resources is deprecated.*")
+
 from typing import Any
 from numpy.typing import NDArray
 import pygame, random
