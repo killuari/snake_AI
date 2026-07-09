@@ -18,7 +18,7 @@ import random
 from typing import Optional
 from stable_baselines3.common.monitor import Monitor
 
-from snake_game import SnakeGame, Direction
+from snake_game import SnakeGame, Direction, COLOR_BACKGROUND, draw_hud
 
 
 class SnakeGameEnvironment(gym.Env):
@@ -38,10 +38,12 @@ class SnakeGameEnvironment(gym.Env):
         obs_mode: "flat" - MultiDiscrete vector for an MlpPolicy (default).
                   "grid" - Dict({"grid": Box(4,2r+1,2r+1), "apple_dir": MultiDiscrete([3,3])})
                            for a CNN-based policy that keeps the FOV's 2D structure.
+        render_fps: Frames (= model decisions) per second in human render mode.
+                    Defaults to metadata["render_fps"] if None.
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True, obs_mode = "flat"):
+    def __init__(self, grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True, obs_mode = "flat", render_fps = None):
         self.grid_size = grid_size
         self.grid_width = grid_width
         self.grid_height = grid_height
@@ -49,12 +51,18 @@ class SnakeGameEnvironment(gym.Env):
         self.training = training
         assert obs_mode in ("flat", "grid")
         self.obs_mode = obs_mode
+        self.render_fps = render_fps or self.metadata["render_fps"]
 
         self.snakeGame = None          # Created on reset()
 
         # Pygame objects (lazy-initialized on first render)
         self.screen = None
         self.clock = None
+
+        # Debug visualization (human render mode only), toggled with the 'f' key:
+        # highlights the FOV the model currently observes and shows an arrow
+        # for the apple-direction observation feature.
+        self.show_debug_overlay = False
 
         # Cached positions for building observations
         self.head_location = np.array([-1, -1])
@@ -284,28 +292,78 @@ class SnakeGameEnvironment(gym.Env):
 
         # Draw on off-screen canvas
         canvas = pygame.Surface((self.grid_size * self.grid_width, self.grid_size * self.grid_height))
-        canvas.fill("black")
+        canvas.fill(COLOR_BACKGROUND)
 
         self.snakeGame.draw(canvas)
-        
+
+        if self.show_debug_overlay:
+            self._draw_fov_overlay(canvas)
+
         # Render score overlay (font only exists in human mode)
         if self.font is not None:
-            score_display = self.font.render(f"Score: {self.snakeGame.score}", True, pygame.Color(255, 255, 255))
-            canvas.blit(score_display, (15, 15))
+            draw_hud(canvas, self.font, self.snakeGame.score)
+
+        if self.show_debug_overlay:
+            self._draw_apple_direction_arrow(canvas)
 
         if self.render_mode == "human" and self.screen is not None and self.clock is not None:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                     self.close()
                     raise SystemExit
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+                    self.show_debug_overlay = not self.show_debug_overlay
 
             self.screen.blit(canvas, (0, 0))
             pygame.display.flip()
-            self.clock.tick(self.metadata["render_fps"])
+            self.clock.tick(self.render_fps)
         else:
             return np.transpose(
                 np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
             )
+
+    def _draw_fov_overlay(self, canvas):
+        """Highlight the (2r+1)x(2r+1) FOV window the model currently observes."""
+        hx, hy = self.head_location
+        r = self.snake_fov_radius
+        size = self.grid_size * (2*r + 1)
+
+        overlay = pygame.Surface((size, size), pygame.SRCALPHA)
+        overlay.fill(pygame.Color(255, 220, 90, 55))
+        pygame.draw.rect(overlay, pygame.Color(255, 220, 90, 170), overlay.get_rect(), width=3)
+
+        # Pygame clips blits at the canvas edge automatically, so no special
+        # handling is needed when the head is close to a wall.
+        top_left = ((hx - r) * self.grid_size, (hy - r) * self.grid_size)
+        canvas.blit(overlay, top_left)
+
+    def _draw_apple_direction_arrow(self, canvas):
+        """Draw a small fixed arrow icon (top-right corner) pointing in the
+        direction of the apple_dir observation feature."""
+        dx_sign, dy_sign = self._apple_direction()
+        dx, dy = dx_sign - 1, dy_sign - 1      # back from {0,1,2} to {-1,0,1}
+        if dx == 0 and dy == 0:
+            return
+
+        direction = pygame.Vector2(dx, dy)
+        if direction.length() > 0:
+            direction = direction.normalize()
+
+        box_size = 56
+        margin = 16
+        icon = pygame.Surface((box_size, box_size), pygame.SRCALPHA)
+        center = pygame.Vector2(box_size / 2, box_size / 2)
+        pygame.draw.circle(icon, pygame.Color(15, 16, 24, 180), center, box_size / 2)
+
+        arrow_len = box_size * 0.32
+        tip = center + direction * arrow_len
+        back = center - direction * arrow_len * 0.6
+        perp = pygame.Vector2(-direction.y, direction.x)
+        left = back + perp * arrow_len * 0.45
+        right = back - perp * arrow_len * 0.45
+        pygame.draw.polygon(icon, pygame.Color(255, 210, 90), [tip, left, right])
+
+        canvas.blit(icon, (canvas.get_width() - margin - box_size, margin))
 
     def close(self):
         """Clean up Pygame resources."""
@@ -314,11 +372,11 @@ class SnakeGameEnvironment(gym.Env):
             pygame.quit()
 
 
-def make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True, obs_mode = "flat"):
+def make_snake_env(grid_size, grid_width, grid_height, snake_fov_radius = 1, render_mode = None, training = True, obs_mode = "flat", render_fps = None):
     """Factory returning a callable that creates a Monitor-wrapped environment.
     Required by SubprocVecEnv (one callable per subprocess)."""
     def _init():
-        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode, training, obs_mode)
+        env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode, training, obs_mode, render_fps)
         env = Monitor(env, filename=None)
         return env
     return _init

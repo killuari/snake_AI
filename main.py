@@ -201,7 +201,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         json.dump(evaluation, file, indent=4)
 
 
-def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=1, use_cnn=False):
+def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=1, use_cnn=False, fps=None):
     """
     Load a trained model and watch it play in a Pygame window.
 
@@ -211,12 +211,19 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
         grid_height:      Grid height (must match the model's training config).
         snake_fov_radius: FOV radius (must match the model's training config).
         use_cnn:          Must match the obs_mode/policy the model was trained with.
+        fps:              Playback speed (frames = model decisions per second).
+                          Defaults to 50 if None. Lower it (e.g. 5-10) to follow
+                          along move by move, raise it to skim through episodes.
+
+    Controls while watching: 'f' toggles a debug overlay showing the FOV the
+    model observes and an arrow for the apple-direction observation; ESC or
+    closing the window exits.
     """
     obs_mode = "grid" if use_cnn else "flat"
     obs_mode_dir = "GRID" if use_cnn else "FLAT"
 
     # Create environment with human rendering (opens Pygame window)
-    env = make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, "human", training=False, obs_mode=obs_mode)()
+    env = make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, "human", training=False, obs_mode=obs_mode, render_fps=fps)()
 
     if model_name == "DQN":
         model = DQN.load(os.path.join(DQN_PATH, obs_mode_dir, f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}", "best_model"), env, device="cpu")
@@ -231,7 +238,7 @@ def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius
 
     # Run the agent until the episode ends
     while not done:
-        action, _ = model.predict(obs, deterministic=False)   # Use greedy policy (no exploration)
+        action, _ = model.predict(obs, deterministic=True)   # Use greedy policy (no exploration)
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
         score += float(reward)
@@ -267,5 +274,5 @@ def test_environment(grid_width=30, grid_height=20, snake_fov_radius=1):
 
 if __name__ == "__main__":
     # Switch between these calls to train, test, or debug:
-    test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=5)
-    #train_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=1, timesteps=3_000_000, num_envs=24, new=False, best=False)
+    test_model(model_name="PPO", use_cnn=False, grid_width=30, grid_height=20, snake_fov_radius=5)
+    #train_model(model_name="PPO", grid_width=30, grid_height=20, snake_fov_radius=5, timesteps=3_000_000, num_envs=24, new=True, use_cnn=True)

@@ -12,7 +12,7 @@ Classes:
     Apple      - The food item that the snake tries to eat.
 """
 
-from cuda.bindings.utils import Any
+from typing import Any
 from numpy.typing import NDArray
 import pygame, random
 import numpy as np
@@ -23,6 +23,33 @@ from enum import Enum
 GRID_SIZE = 30       # Size of each grid cell in pixels
 GRID_WIDTH = 50      # Number of cells horizontally
 GRID_HEIGHT = 30     # Number of cells vertically
+
+# Color palette (dark theme). Shared by the standalone game loop and by
+# snake_game_environment.py's rendering, so both look the same.
+COLOR_BACKGROUND = pygame.Color(24, 26, 38)
+COLOR_GRID_LINE = pygame.Color(32, 35, 50)
+COLOR_SNAKE_HEAD = pygame.Color(140, 235, 160)
+COLOR_SNAKE_TAIL = pygame.Color(45, 130, 90)
+COLOR_SNAKE_EYE = pygame.Color(20, 20, 30)
+COLOR_APPLE = pygame.Color(235, 87, 87)
+COLOR_APPLE_HIGHLIGHT = pygame.Color(255, 175, 175)
+COLOR_APPLE_LEAF = pygame.Color(96, 168, 96)
+COLOR_SCORE_TEXT = pygame.Color(235, 237, 245)
+COLOR_SCORE_PANEL = pygame.Color(15, 16, 24)
+
+
+def draw_hud(surface, font, score, pos=(15, 15)):
+    """Draw the score in a small rounded, semi-transparent panel."""
+    text = font.render(f"Score: {score}", True, COLOR_SCORE_TEXT)
+    padding = 12
+    panel_rect = pygame.Rect(pos[0], pos[1], text.get_width() + 2*padding, text.get_height() + 2*padding)
+
+    panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+    r, g, b, _ = COLOR_SCORE_PANEL
+    pygame.draw.rect(panel, pygame.Color(r, g, b, 170), panel.get_rect(), border_radius=10)
+
+    surface.blit(panel, panel_rect.topleft)
+    surface.blit(text, (panel_rect.x + padding, panel_rect.y + padding))
 
 
 class Direction(Enum):
@@ -181,10 +208,47 @@ class SnakeGame:
         return True
 
     def draw(self, screen):
-        """Render all snake segments and the apple onto the given Pygame surface."""
-        for part in self.snake_list:
-            part.draw(screen)
+        """Render the grid, all snake segments (head to tail gradient + eyes),
+        and the apple onto the given Pygame surface."""
+        self._draw_grid(screen)
+
+        n = len(self.snake_list)
+        for i, part in enumerate(self.snake_list):
+            t = i / max(1, n - 1)   # 0 at head, 1 at tail
+            color = COLOR_SNAKE_HEAD.lerp(COLOR_SNAKE_TAIL, t)
+            part.draw(screen, color)
+
+        self._draw_head_eyes(screen)
         self.apple.draw(screen)
+
+    def _draw_grid(self, screen):
+        """Draw subtle grid lines for visual depth."""
+        width_px = self.grid_size * self.grid_width
+        height_px = self.grid_size * self.grid_height
+        for x in range(0, width_px + 1, self.grid_size):
+            pygame.draw.line(screen, COLOR_GRID_LINE, (x, 0), (x, height_px))
+        for y in range(0, height_px + 1, self.grid_size):
+            pygame.draw.line(screen, COLOR_GRID_LINE, (0, y), (width_px, y))
+
+    def _draw_head_eyes(self, screen):
+        """Draw two eyes on the head, facing the direction of travel. The facing
+        direction is inferred from the head's position relative to the first
+        body segment, so no separate direction state is needed here."""
+        if len(self.snake_list) > 1:
+            facing = self.head.pos - self.snake_list[1].pos
+        else:
+            facing = pygame.Vector2(self.grid_size, 0)
+        facing = facing.normalize() if facing.length() > 0 else pygame.Vector2(1, 0)
+        perp = pygame.Vector2(-facing.y, facing.x)
+
+        center = self.head.pos + pygame.Vector2(self.grid_size / 2, self.grid_size / 2)
+        forward_offset = facing * (self.grid_size * 0.18)
+        side_offset = perp * (self.grid_size * 0.22)
+        eye_radius = max(2, self.grid_size * 0.09)
+
+        for side in (1, -1):
+            eye_center = center + forward_offset + side_offset * side
+            pygame.draw.circle(screen, COLOR_SNAKE_EYE, eye_center, eye_radius)
 
 
 class SnakePart:
@@ -212,9 +276,12 @@ class SnakePart:
         # Convert pixel position to grid coordinates (integer division)
         self.grid_pos = np.array([self.pos.x // self.grid_size, self.pos.y // self.grid_size])
 
-    def draw(self, screen):
-        """Draw this segment as a green rectangle on the given surface."""
-        pygame.draw.rect(screen, pygame.Color(80, 220, 80), pygame.Rect(self.pos.x, self.pos.y, self.grid_size, self.grid_size))
+    def draw(self, screen, color=None):
+        """Draw this segment as a rounded rectangle in the given color."""
+        if color is None:
+            color = COLOR_SNAKE_HEAD
+        radius = max(2, int(self.grid_size * 0.25))
+        pygame.draw.rect(screen, color, pygame.Rect(self.pos.x, self.pos.y, self.grid_size, self.grid_size), border_radius=radius)
 
     def move(self, dir: Direction) -> bool:
         """
@@ -292,9 +359,20 @@ class Apple:
         return True
 
     def draw(self, screen):
-        """Draw the apple as a red circle centered in its grid cell."""
+        """Draw the apple as a circle with a highlight and a small leaf."""
         center = self.pos + pygame.Vector2(self.grid_size / 2, self.grid_size / 2)
-        pygame.draw.circle(screen, pygame.Color(230, 100, 100), center, self.grid_size / 2)
+        radius = self.grid_size / 2 * 0.85
+        pygame.draw.circle(screen, COLOR_APPLE, center, radius)
+
+        highlight_center = center + pygame.Vector2(-radius * 0.35, -radius * 0.35)
+        pygame.draw.circle(screen, COLOR_APPLE_HIGHLIGHT, highlight_center, radius * 0.28)
+
+        leaf_points = [
+            center + pygame.Vector2(0, -radius * 0.95),
+            center + pygame.Vector2(radius * 0.35, -radius * 1.3),
+            center + pygame.Vector2(-radius * 0.05, -radius * 1.05),
+        ]
+        pygame.draw.polygon(screen, COLOR_APPLE_LEAF, leaf_points)
 
 
 # ─── Standalone Game Loop ────────────────────────────────────────────────────
@@ -323,7 +401,7 @@ if __name__ == "__main__":
         if not running:
             break
 
-        screen.fill("black")
+        screen.fill(COLOR_BACKGROUND)
 
         # Read keyboard input for direction changes.
         # Prevent reversing direction (e.g., can't go DOWN while moving UP).
@@ -347,10 +425,7 @@ if __name__ == "__main__":
         
         # Draw everything
         snakeGame.draw(screen)
-
-        # Render score text overlay
-        score_display = font.render(f"Score: {snakeGame.score}", True, pygame.Color(255, 255, 255))
-        screen.blit(score_display, (15, 15))
+        draw_hud(screen, font, snakeGame.score)
 
         pygame.display.flip()
 
