@@ -19,6 +19,7 @@ from gymnasium.wrappers import TimeLimit
 from DQN_hyper_tuning import run_hyperparameter_optimization, load_best_params
 from custom_callback import DeathLogger
 import os
+import json
 import numpy as np
 
 # Default grid cell size in pixels (used for all environments created here)
@@ -28,6 +29,31 @@ GRID_SIZE = 30
 LOG_PATH = os.path.join("Training", "Logs")
 PPO_PATH = os.path.join("Training", "Saved Models", "PPO")
 DQN_PATH = os.path.join("Training", "Saved Models", "DQN")
+
+
+def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_fov_radius, n_episodes=10):
+    """
+    Run n_episodes deterministic and n_episodes stochastic episodes (no rendering,
+    no reward shaping) and return the mean "clean" score (apples eaten) for each,
+    the same score shown by test_model().
+    """
+    env = SnakeGameEnvironment(grid_size, grid_width, grid_height, snake_fov_radius, render_mode=None, training=False)
+    results = {}
+    for label, deterministic in [("deterministic", True), ("stochastic", False)]:
+        scores = []
+        for _ in range(n_episodes):
+            obs, info = env.reset()
+            done = False
+            score = 0.0
+            while not done:
+                action, _ = model.predict(obs, deterministic=deterministic)
+                obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                score += float(reward)
+            scores.append(score)
+        results[label] = {"mean_score": sum(scores) / len(scores), "episodes": n_episodes, "scores": scores}
+    env.close()
+    return results
 
 
 def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=500_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False):
@@ -145,6 +171,23 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # Clean up environments
     train_env.close()
     eval_env.close()
+
+    # Evaluate both checkpoints in this folder (deterministic + stochastic, no
+    # rendering, clean score) and save the results so performance can be read
+    # at a glance without manually testing the model.
+    evaluation = {
+        "timesteps": timesteps,
+        "last_model": evaluate_model_performance(model, GRID_SIZE, grid_width, grid_height, snake_fov_radius),
+    }
+
+    best_model_path = os.path.join(path, "best_model.zip")
+    if os.path.exists(best_model_path):
+        ModelClass = DQN if model_name == "DQN" else PPO
+        best = ModelClass.load(os.path.join(path, "best_model"), device="cpu")
+        evaluation["best_model"] = evaluate_model_performance(best, GRID_SIZE, grid_width, grid_height, snake_fov_radius)
+
+    with open(os.path.join(path, "evaluation.json"), "w") as file:
+        json.dump(evaluation, file, indent=4)
 
 
 def test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=1):
