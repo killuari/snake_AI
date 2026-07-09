@@ -8,6 +8,7 @@ evaluates its performance. The best parameters are saved to a JSON file.
 Functions:
     optimize_dqn():                     Objective function for a single Optuna trial.
     run_hyperparameter_optimization():  Orchestrates the full optimization study.
+    load_best_params():                 Loads previously tuned parameters from disk.
 
 Usage:
     from DQN_hyper_tuning import run_hyperparameter_optimization
@@ -16,11 +17,47 @@ Usage:
 
 import optuna, os, json
 from stable_baselines3 import DQN
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 # Directory where optimization results (best params JSON) are saved
 PATH = os.path.join("Training", "DQN_Hyperparameter_Tuning")
+
+
+def load_best_params(filename=os.path.join(PATH, "best_dqn_params.json")):
+    """Load DQN hyperparameters previously saved by run_hyperparameter_optimization()."""
+    with open(filename, "r") as file:
+        return json.load(file)
+
+
+class OptunaPruningCallback(BaseCallback):
+    """
+    Periodically evaluates the model during a trial and reports the result to
+    Optuna, so the study's pruner can actually stop unpromising trials early.
+
+    Without this, `trial.report()`/`trial.should_prune()` are never called and
+    the MedianPruner configured in run_hyperparameter_optimization() has no
+    effect -- every trial always runs to completion regardless of how poorly
+    it performs early on.
+    """
+
+    def __init__(self, trial, eval_env, eval_freq, n_eval_episodes=5, verbose=0):
+        super().__init__(verbose)
+        self.trial = trial
+        self.eval_env = eval_env
+        self.eval_freq = max(eval_freq, 1)
+        self.n_eval_episodes = n_eval_episodes
+        self.report_idx = 0
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.eval_freq == 0:
+            mean_reward, _ = evaluate_policy(self.model, self.eval_env, n_eval_episodes=self.n_eval_episodes, deterministic=True)
+            self.report_idx += 1
+            self.trial.report(mean_reward, self.report_idx)
+            if self.trial.should_prune():
+                raise optuna.TrialPruned()
+        return True
 
 
 def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake_fov_radius = 1, timesteps = 200_000, num_envs = 1):
@@ -80,16 +117,23 @@ def optimize_dqn(trial, grid_size = 30, grid_width = 30, grid_height = 20, snake
             verbose=0           # Suppress output during optimization
         )
         
+        # Report intermediate performance to Optuna so the study's MedianPruner
+        # can actually stop this trial early if it is clearly underperforming.
+        pruning_callback = OptunaPruningCallback(trial, env, eval_freq=max((timesteps // 100) // num_envs, 1))
+
         # Train for a limited number of steps
-        model.learn(total_timesteps=timesteps)
-        
+        model.learn(total_timesteps=timesteps, callback=pruning_callback)
+
         # Evaluate the trained model over 10 episodes
         mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=10, deterministic=True)
-        
+
         env.close()
-        
+
         return mean_reward
-        
+
+    except optuna.TrialPruned:
+        env.close()
+        raise           # Let Optuna record this trial as pruned, not failed
     except Exception as e:
         print(f"Trial failed: {e}")
         env.close()

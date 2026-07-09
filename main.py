@@ -16,7 +16,7 @@ from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewar
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
-from DQN_hyper_tuning import run_hyperparameter_optimization
+from DQN_hyper_tuning import run_hyperparameter_optimization, load_best_params
 from custom_callback import DeathLogger
 import os
 import numpy as np
@@ -30,7 +30,7 @@ PPO_PATH = os.path.join("Training", "Saved Models", "PPO")
 DQN_PATH = os.path.join("Training", "Saved Models", "DQN")
 
 
-def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=500_000, num_envs=4, new=True, params=None, best=True):
+def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=500_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False):
     """
     Train a DQN or PPO agent on the Snake environment.
 
@@ -48,6 +48,9 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         new:              If True, create a fresh model. If False, load from disk.
         params:           Optional dict of hyperparameters (DQN only). Uses defaults if None.
         best:             If loading (new=False), load "best_model" (True) or "last_model" (False).
+        use_tuned_params: If True and params is None (DQN only), load hyperparameters
+                          previously found by DQN_hyper_tuning.run_hyperparameter_optimization()
+                          instead of using the hardcoded defaults.
     """
     # Create parallel training environments (one per subprocess)
     train_env = SubprocVecEnv([make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius) for _ in range(num_envs)])
@@ -67,21 +70,24 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
             # Resume training from a saved model
             model = DQN.load(os.path.join(path, "best_model" if best else "last_model"), train_env, device='cpu', verbose=1)
         else:
-            # Default DQN hyperparameters (tuned via Optuna)
+            # Default DQN hyperparameters, or previously tuned ones from Optuna
             if params is None:
-                params = {
-                    "learning_rate": 6e-5,
-                    "buffer_size": 2_000_000,
-                    "learning_starts": 50_000,      # Steps before training starts (fill replay buffer)
-                    "batch_size": 256,
-                    "tau": 0.4,                      # Soft update coefficient for target network
-                    "gamma": 0.988,                  # Discount factor
-                    "train_freq": 4,                 # Train every N steps
-                    "gradient_steps": 4,             # Gradient updates per training step
-                    "target_update_interval": 2000,  # Steps between target network hard updates
-                    "exploration_fraction": 0.2,     # Fraction of training for epsilon decay
-                    "exploration_final_eps": 0.05,   # Final exploration rate
-                }
+                if use_tuned_params:
+                    params = load_best_params()
+                else:
+                    params = {
+                        "learning_rate": 6e-5,
+                        "buffer_size": 2_000_000,
+                        "learning_starts": 50_000,      # Steps before training starts (fill replay buffer)
+                        "batch_size": 256,
+                        "tau": 0.4,                      # Soft update coefficient for target network
+                        "gamma": 0.988,                  # Discount factor
+                        "train_freq": 4,                 # Train every N steps
+                        "gradient_steps": 4,             # Gradient updates per training step
+                        "target_update_interval": 2000,  # Steps between target network hard updates
+                        "exploration_fraction": 0.2,     # Fraction of training for epsilon decay
+                        "exploration_final_eps": 0.05,   # Final exploration rate
+                    }
 
             model = DQN(
                 "MlpPolicy", train_env,
