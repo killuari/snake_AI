@@ -38,10 +38,11 @@ TEXT = _hex(COLOR_SCORE_TEXT)
 TEXT_MUTED = "#9195a8"
 
 GREEN = _hex(COLOR_SNAKE_HEAD)          # success / positive (e.g. "Play")
-RED = _hex(COLOR_APPLE)                 # danger / stop / errors
+RED = _hex(COLOR_APPLE)                 # danger / stop / errors (e.g. "Exit", "Cancel & Discard")
 # Not a named constant in snake_game.py, but matches the amber accent used
 # for the FOV debug overlay (game/environment.py), kept consistent here.
 AMBER = "#ffd25a"
+BLUE = "#4d96ff"                        # Train Model's theme accent (nav tile, "Start Training")
 
 # Per-category accent colors for model-list badges (algorithm / observation mode) --
 # distinct from GREEN/RED/AMBER above, which already carry a semantic meaning

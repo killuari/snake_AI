@@ -1,94 +1,150 @@
 # Deep Reinforcement Learning Snake Game
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/)
 [![Gymnasium](https://img.shields.io/badge/Environment-Gymnasium-green.svg)](https://gymnasium.farama.org/)
 [![Stable Baselines3](https://img.shields.io/badge/RL--Library-SB3-orange.svg)](https://stable-baselines3.readthedocs.io/)
 [![Optuna](https://img.shields.io/badge/Optimization-Optuna-blueviolet.svg)](https://optuna.org/)
+[![CustomTkinter](https://img.shields.io/badge/UI-CustomTkinter-9cf.svg)](https://github.com/TomSchimansky/CustomTkinter)
 
-An advanced Reinforcement Learning pipeline featuring a custom-built Game Engine, a Gymnasium-standardized environment, and automated hyperparameter optimization.
+An advanced Reinforcement Learning pipeline featuring a custom-built Game Engine, a Gymnasium-standardized environment, automated hyperparameter optimization, and a graphical desktop launcher to play, watch, and train from.
+
+---
+
+## Launcher
+
+Everything is driven from a single dark-mode desktop app (`python main.py`) — no editing scripts or calling functions by hand. Four modes, each a full screen: **Play** yourself, **Test Model** to watch a trained agent, **Train Model** to start or continue a training run, and **Exit**.
+
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="Launcher home screen" width="420">
+</p>
+
+**Train Model** is a single scrollable form — algorithm, observation mode, grid size, FOV radius, timesteps, parallel environments, and the live training log all in one screen, so you never lose sight of the log while configuring a run. Continuing an existing run shows the same log, plus an independently-scrollable list of saved checkpoints with a "Resume from" choice to its right.
+
+<p align="center">
+  <img src="docs/screenshots/train_model.png" alt="Train Model screen, fully scrollable form" width="480">
+</p>
+
+**Test Model** lists every checkpoint found under `Training/SAVED_MODELS/`, color-coded by algorithm (PPO/DQN) and observation mode (FLAT/GRID) so a long list stays easy to scan, sorted by algorithm → observation mode → grid size → FOV radius. Each card shows its deterministic/stochastic evaluation scores at a glance.
+
+<p align="center">
+  <img src="docs/screenshots/test_model.png" alt="Test Model screen with color-coded model list" width="480">
+</p>
 
 ---
 
 ## Project Architecture & Engineering
 
-This project is built on three main pillars, emphasizing modularity:
+The project is a set of small, focused packages:
 
-### 1. Custom Game (`snake_game.py`)
-I developed the **Snake Game** from scratch using Pygame.
-* **Object-Oriented Design:** Dedicated classes for `SnakeGame`, `Direction`, and Game Entities.
-* **Decoupled Logic:** The game logic is entirely independent of the AI, allowing for both human play and high-speed headless simulation.
-* **Collision System:** Optimized coordinate-based collision detection for the snake body, walls, and apples.
+### `game/` — Core Engine & Environment
+* **`snake_game.py`** — The Snake game itself, built from scratch on Pygame. Object-oriented (`SnakeGame`, `SnakePart`, `Apple`, `Direction`), fully decoupled from the AI so it runs identically for human play, headless training, and visual playback.
+* **`environment.py`** — A custom Gymnasium (`gym.Env`) wrapper around the game.
+* **`game_over.py`** — The shared death-animation and game-over overlay used by both human play and model playback.
 
-### 2. Specialized Gym Environment (`snake_game_environment.py`)
-To make the game "trainable", I implemented a custom `gym.Env` (Gymnasium) wrapper.
-* **Local FOV (Field of View) Observation:** Instead of feeding the agent the entire grid, it perceives a $(2n+1) \times (2n+1)$ local area around its head. This allows the model to **generalize** to any grid size without retraining.
-* **Complex Reward Shaping:** 
-    * `Positive`: Reaching food.
-    * `Negative`: Deaths (scaled by length to punish late-game mistakes harder).
-    * `Loop Prevention`: Small penalties for excessive steps without progress to avoid infinite circling.
+### `rl/` — Training & Playback Pipeline
+* **`training.py`** — `train_model()`: trains DQN or PPO with `SubprocVecEnv`-parallelized environments, periodic evaluation, best-model tracking, and graceful cancel/discard support.
+* **`playback.py`** — `play_game()` (human play) and `test_model()` (watch a trained agent), both pygame windows.
+* **`hyperparameter_tuning.py`** — Optuna-driven DQN hyperparameter search.
+* **`feature_extractors.py`**, **`callbacks.py`**, **`paths.py`**, **`check_models.py`** — the CNN feature extractor for GRID mode, training callbacks, the checkpoint directory layout, and a manual "does every saved model still load?" sanity check.
 
-### 3. AI Training Pipeline (`main.py` & `DQN_hyper_tuning.py`)
-* **Algorithms:** Implementation of **Deep Q-Networks (DQN)** and **Proximal Policy Optimization (PPO)**.
-* **Bayesian Optimization:** Integrated **Optuna** to automate the search for optimal hyperparameters.
-* **Parallelization:** Utilizes `SubprocVecEnv` to run multiple environment instances in parallel, maximizing CPU utilization and speeding up convergence.
+### `ui/` — Desktop Launcher
+A CustomTkinter app (`ui/app.py`) with one screen per mode under `ui/screens/`, sharing a small theme/widget toolkit (`ui/theme.py`, `ui/widgets.py`) and the checkpoint-discovery logic (`ui/models.py`).
+
+### `main.py`
+The entry point: `python main.py` launches the UI. Nothing else lives here — kept intentionally thin to avoid an import cycle with `ui`.
 
 ---
 
 ## Technical Highlights
 
 ### The Observation Logic
-The agent doesn't just see pixels; it understands the state. The observation space is a `MultiDiscrete` array representing the contents of the local FOV:
-- `0`: Empty Space
-- `1`: Snake Body
-- `2`: Apple
-- `3`: Wall
+The agent doesn't see pixels; it perceives a local **Field of View (FOV)** around its head — a $(2n+1) \times (2n+1)$ window — so a trained model generalizes to grid sizes it never trained on. Two observation layouts are supported, selectable per training run:
+* **FLAT** — a `MultiDiscrete` vector of the FOV's cell contents (`0`=empty, `1`=body, `2`=apple, `3`=wall) plus the apple's direction, for a standard `MlpPolicy`.
+* **GRID** — the same FOV as a one-hot `(4, H, W)` tensor plus the apple's direction, fed through a small purpose-built CNN (`SnakeCombinedExtractor`) via a `MultiInputPolicy` — SB3's default CNN assumes much larger image-like inputs, so a small custom extractor was needed for a 7×7–17×17 FOV window.
 
+Press **`f`** while watching a model play to toggle a debug overlay: the FOV window it's currently looking at, and an arrow for the apple-direction feature.
 
+### Complex Reward Shaping
+* **Positive:** reaching the apple.
+* **Negative:** dying, scaled by snake length (a late-game mistake costs more than an early one).
+* **Loop prevention:** a small penalty for excessive steps without progress, to discourage infinite circling.
 
 ### Automated Logging & Callbacks
-Using `custom_callback.py`, the training process monitors more than just the reward:
-* **Death Analysis:** Tracks whether the agent died due to a collision or reaching the `MaxSteps` limit.
-* **Model Comparison:** Automatically saves the "Best Model" only if it outperforms previous iterations during evaluation.
+`rl/callbacks.py`'s `DeathLogger` tracks more than reward during training:
+* **Death Analysis:** collision vs. `MaxSteps` timeout, reported periodically.
+* **Model Comparison:** the "best" checkpoint is only overwritten if a new evaluation actually beats it.
+
+### Error Checking
+`rl/check_models.py` (`python -m rl.check_models`) loads every checkpoint the launcher would list, and reports which ones actually load — catching a broken/incompatible checkpoint (e.g. a stale module reference from a refactor) before it surfaces as a cryptic error mid-session in the UI.
 
 ---
 
 ## Installation & Usage
 
-## 1. Prerequisites
-Ensure you have Python 3.9 or higher installed. It is highly recommended to use a virtual environment to manage dependencies.
+### 1. Prerequisites
+Python 3.13+. The project uses [`uv`](https://docs.astral.sh/uv/) for dependency management (a `uv.lock` is checked in); plain `pip` works too.
 
 ### 2. Install Dependencies
 
-Install the required libraries using pip:
-
 ```bash
-pip install gymnasium pygame stable-baselines3 optuna numpy
+uv sync
 ```
 
-### 3. Execution Guide
+or, without `uv`:
 
-The `main.py` script is the central entry point of the project. You can switch between different modes by modifying the function calls in the `if __name__ == "__main__":` block at the bottom of the script.
+```bash
+pip install pygame numpy gymnasium stable-baselines3 optuna customtkinter
+```
 
-* **Training a Model:**
-Call `train_model(model_name="DQN", ...)` to start a new training session. The script will automatically use `SubprocVecEnv` for parallel processing.
+### 3. Run It
 
-* **Hyperparameter Optimization:**
-To find the best settings, uncomment `run_hyperparameter_optimization(...)`. This triggers an **Optuna study** that explores the best learning rates and architectures.
+```bash
+python main.py
+```
 
-* **Testing & Visualization:**
-To watch the trained agent play, use `test_model(model_name="DQN")`. This will open a Pygame window and render the snake's decision-making process in real-time.
+This opens the launcher — pick **Play**, **Test Model**, or **Train Model** from there. `Training/` (and `Training/SAVED_MODELS/`) is created automatically as needed; nothing has to exist beforehand.
+
+Everything is also directly importable for scripting, e.g.:
+
+```python
+from rl.training import train_model
+from rl.playback import play_game, test_model
+
+train_model(model_name="DQN", grid_width=30, grid_height=20, timesteps=3_000_000)
+test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3)
+```
 
 ---
 
 ## Project Structure
 
 ```text
-├── DQN_hyper_tuning.py        # Hyperparameter optimization script
-├── custom_callback.py         # Custom logging and evaluation callbacks
-├── main.py                    # Main entry point and training pipeline
-├── snake_game.py              # Pygame-based game engine
-└── snake_game_environment.py  # Gymnasium environment wrapper
+├── main.py                       # Entry point: launches the UI
+├── game/
+│   ├── snake_game.py             # Pygame-based game engine
+│   ├── environment.py            # Gymnasium environment wrapper
+│   └── game_over.py              # Shared death animation + game-over overlay
+├── rl/
+│   ├── training.py               # train_model()
+│   ├── playback.py               # play_game(), test_model()
+│   ├── hyperparameter_tuning.py  # Optuna DQN search
+│   ├── feature_extractors.py     # CNN extractor for GRID observation mode
+│   ├── callbacks.py              # DeathLogger training callback
+│   ├── paths.py                  # Checkpoint directory layout + grid presets
+│   └── check_models.py           # Manual "do all saved models load?" check
+├── ui/
+│   ├── app.py                    # App root window + navigation
+│   ├── theme.py, widgets.py      # Shared color palette + widget factories
+│   ├── models.py                 # Checkpoint discovery for the UI
+│   └── screens/                  # home, play, test_model, train_model, base
+└── Training/
+    └── SAVED_MODELS/
+        └── {PPO,DQN}/{FLAT,GRID}/GRID_{w}_{h}/FOV_RADIUS_{r}/
+            ├── best_model_{steps}.zip
+            ├── last_model_{steps}.zip
+            └── evaluation.json
 ```
+
 ---
 
 ## License

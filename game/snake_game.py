@@ -20,12 +20,22 @@ Classes:
 import os
 import warnings
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+# Also set as PYTHONWARNINGS (not just warnings.filterwarnings() below): SB3's
+# SubprocVecEnv training workers are separate interpreters (forkserver/spawn),
+# each with its own fresh warnings registry -- filterwarnings() only affects
+# *this* process, so without the env var (inherited by every child process and
+# parsed at *their* interpreter startup, before any of our code runs) each
+# training worker printed both warnings again.
+os.environ.setdefault(
+    "PYTHONWARNINGS",
+    "ignore:Your system is avx2 capable:RuntimeWarning,ignore:pkg_resources is deprecated:UserWarning",
+)
 warnings.filterwarnings("ignore", message=r".*avx2.*", category=RuntimeWarning)
 warnings.filterwarnings("ignore", message=r".*pkg_resources is deprecated.*")
 
 from typing import Any
 from numpy.typing import NDArray
-import pygame, random
+import pygame, random, math
 import numpy as np
 from enum import Enum
 
@@ -136,13 +146,24 @@ class SnakeGame:
 
         # Initialize the snake at the center of the grid, facing right,
         # with 3 segments: head + 2 body parts extending to the left.
-        pos = pygame.Vector2(grid_size*grid_width // 2, grid_size*grid_height // 2)
+        # Divide the cell counts first, *then* scale by grid_size -- dividing
+        # the pixel total instead (grid_size*grid_width // 2) only lands back
+        # on a grid line when grid_width is even; for an odd width (e.g. 45)
+        # it lands mid-cell, permanently offsetting the snake and apple from
+        # the grid lines for that whole game.
+        pos = pygame.Vector2((grid_width // 2) * grid_size, (grid_height // 2) * grid_size)
         self.head = SnakePart(grid_size, grid_width, grid_height, pos)
         self.snake_list = [self.head, SnakePart(grid_size, grid_width, grid_height, pos - pygame.Vector2(self.grid_size, 0)), SnakePart(grid_size, grid_width, grid_height, pos - 2*pygame.Vector2(self.grid_size, 0))]
 
         # Create the apple, placed on a cell not occupied by the snake
         self.apple = Apple(grid_size, grid_width, grid_height)
         self.apple.place([part.grid_pos for part in self.snake_list])
+
+        # (pixel_pos, start_ticks) of the most recently eaten apple, drawn as a
+        # brief expanding ring by _draw_eat_effect() -- None when no effect is
+        # in progress. Tracked separately from self.apple since eat_apple()
+        # immediately re-places the apple at a new position.
+        self._eat_effect = None
 
     def get_tail_locations(self) -> list[NDArray[Any]]:
         """Return a list of grid positions for all body parts (excluding the head).
@@ -209,6 +230,10 @@ class SnakeGame:
         if not np.array_equal(self.apple.grid_pos, self.head.grid_pos):
             return False
 
+        # Remember where the apple was eaten (before it's re-placed below) so
+        # draw() can flash a brief ring there.
+        self._eat_effect = (self.apple.pos.copy(), pygame.time.get_ticks())
+
         # Apple was eaten: grow snake and increment score
         self.add_part()
         self.score += 1
@@ -231,6 +256,35 @@ class SnakeGame:
 
         self._draw_head_eyes(screen)
         self.apple.draw(screen)
+        self._draw_eat_effect(screen)
+
+    def _draw_eat_effect(self, screen):
+        """Draw a brief expanding, fading ring where the apple was just eaten
+        (Google-Snake-style feedback). No-ops once the effect's duration has
+        elapsed, clearing it so this is a cheap no-op on every later frame."""
+        if self._eat_effect is None:
+            return
+
+        pos, start_ticks = self._eat_effect
+        duration_ms = 350
+        elapsed = pygame.time.get_ticks() - start_ticks
+        if elapsed >= duration_ms:
+            self._eat_effect = None
+            return
+
+        t = elapsed / duration_ms                      # 0 -> 1 over the effect's lifetime
+        center = pos + pygame.Vector2(self.grid_size / 2, self.grid_size / 2)
+        radius = self.grid_size * 0.9 * t
+        alpha = int(255 * (1 - t))
+        line_width = max(2, int(self.grid_size * 0.08))
+
+        surface_size = self.grid_size * 2
+        ring = pygame.Surface((surface_size, surface_size), pygame.SRCALPHA)
+        pygame.draw.circle(
+            ring, pygame.Color(COLOR_APPLE.r, COLOR_APPLE.g, COLOR_APPLE.b, alpha),
+            (surface_size / 2, surface_size / 2), radius, width=line_width,
+        )
+        screen.blit(ring, (center.x - surface_size / 2, center.y - surface_size / 2))
 
     def _draw_grid(self, screen):
         """Draw subtle grid lines for visual depth."""
@@ -370,9 +424,12 @@ class Apple:
         return True
 
     def draw(self, screen):
-        """Draw the apple as a circle with a highlight and a small leaf."""
+        """Draw the apple as a circle with a highlight and a small leaf.
+        A slow, subtle radius pulse (idle "shimmer") keeps a static apple
+        from reading as a flat, lifeless sprite while it waits to be eaten."""
+        pulse = 1.0 + 0.06 * math.sin(pygame.time.get_ticks() / 1000.0 * 2.4)
         center = self.pos + pygame.Vector2(self.grid_size / 2, self.grid_size / 2)
-        radius = self.grid_size / 2 * 0.85
+        radius = self.grid_size / 2 * 0.85 * pulse
         pygame.draw.circle(screen, COLOR_APPLE, center, radius)
 
         highlight_center = center + pygame.Vector2(-radius * 0.35, -radius * 0.35)

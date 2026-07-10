@@ -9,7 +9,8 @@ import customtkinter as ctk
 
 from rl.training import train_model
 from rl.hyperparameter_tuning import PATH as DQN_TUNING_PATH
-from ui.theme import PANEL, BORDER, TEXT, TEXT_MUTED, AMBER, RED, GREEN, RADIUS, _mix
+from rl.paths import GRID_PRESETS
+from ui.theme import PANEL, BORDER, TEXT, TEXT_MUTED, AMBER, RED, GREEN, BLUE, RADIUS, _mix
 from ui.widgets import (
     _make_content_column, _make_choice_row, _make_slider_row, _make_entry_row,
     _make_outline_button, _bind_recursive, _enable_mousewheel, show_confirm_dialog, _make_model_badge,
@@ -19,15 +20,15 @@ from ui.screens.base import SubScreen
 
 
 class TrainModelScreen(SubScreen):
-    # Grid size is restricted to 3 curated presets (rather than free width/height)
-    # since it determines the save-folder structure (GRID_{w}_{h}); all three keep
-    # the same 3:2 aspect ratio as the existing default, just scaled 1x/1.5x/2x.
-    GRID_PRESETS = [("Small (30x20)", 30, 20), ("Medium (45x30)", 45, 30), ("Large (60x40)", 60, 40)]
     MIN_TIMESTEPS = 1000
 
     def __init__(self, parent, app):
         super().__init__(parent, app, "TRAIN MODEL")
-        self._grid_by_label = {label: (w, h) for label, w, h in self.GRID_PRESETS}
+        # Grid size is restricted to 3 curated presets (rather than free
+        # width/height) since it determines the save-folder structure
+        # (GRID_{w}_{h}); shared with PlayScreen (rl.paths.GRID_PRESETS) so
+        # both screens offer the same sizes.
+        self._grid_by_label = {label: (w, h) for label, w, h in GRID_PRESETS}
         tuned_params_path = os.path.join(DQN_TUNING_PATH, "best_dqn_params.json")
         self._tuned_params_available = os.path.exists(tuned_params_path)
 
@@ -38,21 +39,35 @@ class TrainModelScreen(SubScreen):
         self._cancel_event = None
         self._discard_event = None
 
+        # The whole form -- mode toggle, algo/obs/grid/fov (or the continue-
+        # model list), timesteps/parallel-envs/tuned-checkbox, start button,
+        # log -- lives inside one outer scrollable frame instead of packing
+        # the log/button/shared controls as fixed, always-visible chrome
+        # around a small inner scroll region: scrolling down now reveals more
+        # of the (taller) log, and no field is pinned to a fixed spot. The
+        # model list and the log each get their own nested, height-bounded
+        # scroll region inside that (see _rebind_mousewheel below).
+        self.outer_scroll = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS)
+        self.outer_scroll.pack(fill="both", expand=True)
+
         self.train_mode_seg = _make_choice_row(
-            self.body, "Train", ["New Model", "Continue Existing"], "New Model", app.font_body,
+            self.outer_scroll, "Train", ["New Model", "Continue Existing"], "New Model", app.font_body,
             command=self._on_train_mode_change,
         )
 
-        # Build the log box, start/cancel button, and shared controls without
-        # packing them into self.body yet: they get packed with side="bottom"
-        # below (in bottom-to-top order) so they always claim their own space
-        # first, no matter how small the window gets -- only self.scroll (the
-        # form area, which has its own internal scrollbar) is left to shrink.
-        log_box = self._make_log_box(self.body)
+        # Full width of the scroll region (not content-column-capped) so the
+        # continue panel's 2-column [card list | resume-from] layout has room;
+        # new_panel re-caps its own width below, matching every other form.
+        self.mode_container = ctk.CTkFrame(self.outer_scroll, fg_color="transparent")
+        self.mode_container.pack(fill="x", expand=True, pady=(8, 0))
 
-        self.start_btn = _make_outline_button(self.body, "Start Training", RED, self._start, app.font_body, width=220, height=44)
+        self.new_panel = _make_content_column(self.mode_container)
+        self.continue_panel = ctk.CTkFrame(self.mode_container, fg_color="transparent")
+        self._build_new_panel(self.new_panel)
+        self._build_continue_panel(self.continue_panel)
+        self.new_panel.pack(fill="y", expand=True)
 
-        shared = _make_content_column(self.body)
+        shared = _make_content_column(self.outer_scroll)
         self.timesteps_entry = _make_entry_row(shared, "Timesteps", 3_000_000, app.font_body)
         cpu_count = os.cpu_count() or 4
         self.num_envs_var = _make_slider_row(shared, "Parallel environments", 1, cpu_count, 1, min(4, cpu_count), app.font_body)
@@ -63,31 +78,28 @@ class TrainModelScreen(SubScreen):
             fg_color=AMBER, hover_color=_mix(AMBER, "#000000", 0.2), border_color=BORDER,
         )
         self.tuned_checkbox.pack(anchor="w", pady=(8, 4))
+        shared.pack(fill="y", pady=(16, 0))
 
-        log_box.pack(side="bottom", fill="both", expand=False)
-        self.start_btn.pack(side="bottom", pady=(12, 16))
-        shared.pack(side="bottom", pady=(8, 0))
+        self.start_btn = _make_outline_button(self.outer_scroll, "Start Training", BLUE, self._start, app.font_body, width=220, height=44)
+        self.start_btn.pack(pady=(16, 16))
 
-        self.scroll = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS, height=170)
-        self.scroll.pack(side="top", fill="both", expand=True, pady=(8, 0))
-
-        self.new_panel = _make_content_column(self.scroll)
-        self.continue_panel = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        self._build_new_panel(self.new_panel)
-        self._build_continue_panel(self.continue_panel)
-        self.new_panel.pack(fill="y", expand=True)
+        # Taller than the other screens' log box (140px) -- this is the field
+        # the user specifically wanted more of visible at once; identical
+        # styling to SubScreen._make_log_box's default, just more height.
+        log_box = self._make_log_box(self.outer_scroll, height=240)
+        log_box.pack(fill="both", expand=False, pady=(0, 8))
 
         self._on_algo_change("DQN")
         self._check_collision()
         self._update_start_enabled()
-        _enable_mousewheel(self.scroll)
+        self._rebind_mousewheel()
 
     # --- "New Model" panel ---------------------------------------------------
 
     def _build_new_panel(self, parent):
         self.algo_seg = _make_choice_row(parent, "Algorithm", ["DQN", "PPO"], "DQN", self.app.font_body, command=self._on_new_config_change)
         self.obs_seg = _make_choice_row(parent, "Observation mode", ["FLAT", "GRID"], "FLAT", self.app.font_body, command=self._on_new_config_change)
-        self.grid_seg = _make_choice_row(parent, "Grid size", [p[0] for p in self.GRID_PRESETS], self.GRID_PRESETS[0][0], self.app.font_body, command=self._on_new_config_change)
+        self.grid_seg = _make_choice_row(parent, "Grid size", [p[0] for p in GRID_PRESETS], GRID_PRESETS[0][0], self.app.font_body, command=self._on_new_config_change)
         self.fov_var = _make_slider_row(parent, "FOV radius", 1, 8, 1, 3, self.app.font_body, on_change=self._on_new_config_change)
 
         self.warning_frame = ctk.CTkFrame(parent, fg_color=_mix(PANEL, RED, 0.15), corner_radius=RADIUS, border_width=2, border_color=RED)
@@ -149,14 +161,26 @@ class TrainModelScreen(SubScreen):
     # --- "Continue Existing" panel -------------------------------------------
 
     def _build_continue_panel(self, parent):
-        self.continue_cards_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        self.continue_cards_frame.pack(fill="both", expand=True)
+        # 2-column layout: card list on the left, "Resume from" to its right
+        # (only meaningful -- and only shown enabled -- once a card is
+        # selected). grid() here is scoped to `parent`'s own children; `parent`
+        # itself is still pack()ed/pack_forget()'d by _on_train_mode_change,
+        # so mixing geometry managers is safe (different parent each level).
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=0)
+        parent.grid_rowconfigure(0, weight=1)
+
+        # Height-bounded so this is a real, independently-scrolling nested
+        # region instead of growing to fit every card and defeating the point
+        # (see _enable_mousewheel's `nested` docstring in ui/widgets.py).
+        self.continue_cards_frame = ctk.CTkScrollableFrame(parent, fg_color="transparent", corner_radius=RADIUS, height=280)
+        self.continue_cards_frame.grid(row=0, column=0, sticky="nsew")
         self._continue_cards_by_path = {}
         self._refresh_continue_models()
 
-        row = _make_content_column(parent)
-        row.pack(pady=(8, 0))
-        self.continue_checkpoint_seg = _make_choice_row(row, "Resume from", ["Best", "Last"], "Best", self.app.font_body)
+        resume_col = ctk.CTkFrame(parent, fg_color="transparent")
+        resume_col.grid(row=0, column=1, sticky="n", padx=(16, 0))
+        self.continue_checkpoint_seg = _make_choice_row(resume_col, "Resume from", ["Best", "Last"], "Best", self.app.font_body)
         self.continue_checkpoint_seg.configure(state="disabled")
 
     def _refresh_continue_models(self):
@@ -179,8 +203,24 @@ class TrainModelScreen(SubScreen):
                 self._continue_cards_by_path[info["path"]] = card
         if hasattr(self, "continue_checkpoint_seg"):
             self.continue_checkpoint_seg.configure(state="disabled")
-        _enable_mousewheel(self.scroll)
+        self._rebind_mousewheel()
         self._update_start_enabled()
+
+    def _rebind_mousewheel(self):
+        """
+        (Re)bind wheel handling on the outer scroll, with the log box and (if
+        built yet) the continue-model card list as independent nested scroll
+        targets -- called once at the end of __init__ (after the log box
+        exists) and again whenever _refresh_continue_models() rebuilds the
+        card list (new card widgets need fresh binds).
+        """
+        nested = []
+        if self.log_box is not None:
+            nested.append((self.log_box, lambda d: self.log_box._textbox.yview_scroll(d, "units")))
+        if hasattr(self, "continue_cards_frame"):
+            cards_canvas = self.continue_cards_frame._parent_canvas
+            nested.append((self.continue_cards_frame, lambda d: cards_canvas.yview_scroll(d, "units")))
+        _enable_mousewheel(self.outer_scroll, nested=nested)
 
     def _make_continue_card(self, parent, info):
         frame = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=RADIUS, border_width=2, border_color=BORDER)

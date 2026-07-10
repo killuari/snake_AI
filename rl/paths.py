@@ -14,6 +14,13 @@ import glob
 # Default grid cell size in pixels (used for all environments created here)
 GRID_SIZE = 30
 
+# The only grid sizes the app offers, for both training and human play -- a
+# curated set (not a free width/height slider) since a model's grid size is
+# baked into its checkpoint folder name (GRID_{w}_{h}) and, for human play, an
+# unconstrained size previously let the grid land off-cell (see the spawn-
+# position fix in game/snake_game.py). All three keep a 3:2 aspect ratio.
+GRID_PRESETS = [("Small (30x20)", 30, 20), ("Medium (45x30)", 45, 30), ("Large (60x40)", 60, 40)]
+
 # Paths for saving/loading trained models and training logs
 LOG_PATH = os.path.join("Training", "Logs")
 PPO_PATH = os.path.join("Training", "SAVED_MODELS", "PPO")

@@ -63,10 +63,10 @@ class SubScreen(ctk.CTkFrame):
             total += child.winfo_reqheight() + pad_total(info.get("pady", 0))
         return total + MIN_FLEX_HEIGHT + 20
 
-    def _make_log_box(self, parent):
+    def _make_log_box(self, parent, height=140):
         self.log_box = ctk.CTkTextbox(
             parent, font=self.app.font_mono, fg_color=PANEL, text_color=TEXT_MUTED,
-            corner_radius=RADIUS, height=140, state="disabled", wrap="word",
+            corner_radius=RADIUS, height=height, state="disabled", wrap="word",
         )
         return self.log_box
 

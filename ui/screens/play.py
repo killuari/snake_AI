@@ -5,20 +5,24 @@ ui/screens/play.py - "Play yourself" screen.
 import customtkinter as ctk
 
 from rl.playback import play_game
+from rl.paths import GRID_PRESETS
 from ui.theme import TEXT_MUTED, GREEN
-from ui.widgets import _make_content_column, _make_slider_row, _make_outline_button, _speed_label
+from ui.widgets import _make_content_column, _make_choice_row, _make_slider_row, _make_outline_button, _speed_label
 from ui.screens.base import SubScreen
 
 
 class PlayScreen(SubScreen):
     def __init__(self, parent, app):
         super().__init__(parent, app, "PLAY YOURSELF")
+        self._grid_by_label = {label: (w, h) for label, w, h in GRID_PRESETS}
 
         form = _make_content_column(self.body)
         form.pack(pady=(4, 16))
 
-        self.width_var = _make_slider_row(form, "Grid width", 10, 80, 5, 30, app.font_body)
-        self.height_var = _make_slider_row(form, "Grid height", 10, 60, 5, 20, app.font_body)
+        # Same 3 curated presets as Train Model (rl.paths.GRID_PRESETS), not a
+        # free width/height slider -- these are the only sizes any trained
+        # model exists for, so a free size here would just be pointless choice.
+        self.grid_seg = _make_choice_row(form, "Grid size", [p[0] for p in GRID_PRESETS], GRID_PRESETS[0][0], app.font_body)
         self.speed_var = _make_slider_row(form, "Speed", 1, 5, 1, 1, app.font_body, value_fmt=_speed_label)
 
         ctk.CTkLabel(
@@ -36,11 +40,12 @@ class PlayScreen(SubScreen):
         self.start_btn.pack(side="bottom", pady=(0, 16))
 
     def _start(self):
+        grid_width, grid_height = self._grid_by_label[self.grid_seg.get()]
         self._start_background(
             play_game,
             dict(
-                grid_width=int(self.width_var.get()),
-                grid_height=int(self.height_var.get()),
+                grid_width=grid_width,
+                grid_height=grid_height,
                 fps=int(self.speed_var.get()) * 10,
             ),
             self.start_btn,

@@ -13,6 +13,8 @@ usually 84x84) and produces invalid dimensions for a small FOV window (e.g.
 7x7 or 11x11) -- hence this small, purpose-built extractor instead.
 """
 
+import sys
+
 import torch as th
 import torch.nn as nn
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -46,3 +48,12 @@ class SnakeCombinedExtractor(BaseFeaturesExtractor):
         grid_features = self.cnn_linear(self.cnn(observations["grid"].float()))
         dir_features = self.dir_linear(observations["apple_dir"].float())
         return th.cat([grid_features, dir_features], dim=1)
+
+
+# GRID-mode checkpoints saved before the package refactor have this class
+# cloudpickled by reference under its old top-level module path
+# ("feature_extractors.SnakeCombinedExtractor"). Alias that name to this
+# already-imported module so DQN.load()/PPO.load() can still resolve it --
+# without this, loading any pre-refactor GRID checkpoint raises
+# "ModuleNotFoundError: No module named 'feature_extractors'".
+sys.modules.setdefault("feature_extractors", sys.modules[__name__])

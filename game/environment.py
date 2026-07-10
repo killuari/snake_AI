@@ -8,6 +8,15 @@ generalize across grid sizes.
 FOV cell encoding: 0=empty, 1=body, 2=apple, 3=wall.
 """
 
+# Imported first (before `import pygame` below): game.snake_game's module-level
+# pygame startup hygiene (env vars + warnings filters, see its docstring) must
+# run before pygame is imported anywhere in this process. A SubprocVecEnv
+# worker reconstructing a pickled env only imports what it needs to resolve
+# SnakeGameEnvironment -- i.e. this module -- so if `import pygame` ran first
+# right here, that worker's AVX2/pkg_resources warnings would already have
+# fired before game.snake_game's protective code got a chance to run.
+from game.snake_game import SnakeGame, Direction, COLOR_BACKGROUND, draw_hud
+
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
 
@@ -17,8 +26,6 @@ import numpy as np
 import random
 from typing import Optional
 from stable_baselines3.common.monitor import Monitor
-
-from game.snake_game import SnakeGame, Direction, COLOR_BACKGROUND, draw_hud
 
 
 class SnakeGameEnvironment(gym.Env):

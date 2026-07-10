@@ -72,7 +72,7 @@ def _bind_recursive(widget, event, handler):
         _bind_recursive(child, event, handler)
 
 
-def _enable_mousewheel(scrollable_frame):
+def _enable_mousewheel(scrollable_frame, nested=()):
     """
     customtkinter's own CTkScrollableFrame wheel handling refuses to scroll
     whenever the pointer is over a CTkSlider/CTkTextbox/CTkScrollbar (see
@@ -85,20 +85,42 @@ def _enable_mousewheel(scrollable_frame):
     and <MouseWheel> (event.delta, positive/negative) -- some libinput/XInput2
     setups deliver one but not the other, so covering both is what actually
     makes this reliable across different mice/touchpads/compositors.
+
+    `nested`: an iterable of (widget, scroll_fn) pairs for regions that must
+    scroll independently of `scrollable_frame` (e.g. a taller log box or a
+    card list nested inside an overall-scrollable screen) -- wheel events
+    anywhere inside one of these widgets' subtrees call its own `scroll_fn(d)`
+    (d: -1 up / +1 down) instead of the outer canvas, and consume the event
+    ("break") so it doesn't *also* scroll the outer frame at the same time.
     """
-    canvas = scrollable_frame._parent_canvas
+    outer_canvas = scrollable_frame._parent_canvas
+    nested_map = dict(nested)
 
-    def _on_wheel(event):
-        if event.num == 4:
-            canvas.yview_scroll(-1, "units")
-        elif event.num == 5:
-            canvas.yview_scroll(1, "units")
-        elif getattr(event, "delta", 0):
-            canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+    def _make_handler(scroll_fn):
+        def _on_wheel(event):
+            if event.num == 4:
+                scroll_fn(-1)
+            elif event.num == 5:
+                scroll_fn(1)
+            elif getattr(event, "delta", 0):
+                scroll_fn(-1 if event.delta > 0 else 1)
+            return "break"
+        return _on_wheel
 
-    _bind_recursive(scrollable_frame, "<Button-4>", _on_wheel)
-    _bind_recursive(scrollable_frame, "<Button-5>", _on_wheel)
-    _bind_recursive(scrollable_frame, "<MouseWheel>", _on_wheel)
+    outer_handler = _make_handler(lambda d: outer_canvas.yview_scroll(d, "units"))
+
+    def _walk(widget, handler):
+        if widget in nested_map:
+            handler = _make_handler(nested_map[widget])
+        for event_name in ("<Button-4>", "<Button-5>", "<MouseWheel>"):
+            try:
+                widget.bind(event_name, handler)
+            except NotImplementedError:
+                pass
+        for child in widget.winfo_children():
+            _walk(child, handler)
+
+    _walk(scrollable_frame, outer_handler)
 
 
 def _make_slider_row(parent, label, from_, to, step, initial, font_body, value_fmt=None, on_change=None):
