@@ -82,11 +82,15 @@ class TrainModelScreen(SubScreen):
 
         self.start_btn = _make_outline_button(self.outer_scroll, "Start Training", BLUE, self._start, app.font_body, width=220, height=44)
         self.start_btn.pack(pady=(16, 16))
+        # CTkButton renders text_color_disabled (not text_color) while disabled
+        # (see ctk_button.py: _draw()) -- save the theme's real default instead
+        # of guessing a value to restore once cancelling's red state is over.
+        self._start_btn_default_text_color_disabled = self.start_btn.cget("text_color_disabled")
 
         # Taller than the other screens' log box (140px) -- this is the field
         # the user specifically wanted more of visible at once; identical
         # styling to SubScreen._make_log_box's default, just more height.
-        log_box = self._make_log_box(self.outer_scroll, height=240)
+        log_box = self._make_log_box(self.outer_scroll, height=400)
         log_box.pack(fill="both", expand=False, pady=(0, 8))
 
         self._on_algo_change("DQN")
@@ -365,7 +369,10 @@ class TrainModelScreen(SubScreen):
 
     def _on_training_finished(self):
         self._is_training = False
-        self.start_btn.configure(text="Start Training", command=self._start)
+        self.start_btn.configure(
+            text="Start Training", command=self._start, text_color=BLUE,
+            text_color_disabled=self._start_btn_default_text_color_disabled,
+        )
         self._refresh_continue_models()
         if self.train_mode_seg.get() == "New Model":
             self._check_collision()
@@ -384,11 +391,28 @@ class TrainModelScreen(SubScreen):
     def _do_cancel_and_save(self):
         if self._cancel_event is not None:
             self._cancel_event.set()
+            self._show_cancelling()
 
     def _do_cancel_and_discard(self):
         if self._cancel_event is not None:
             self._discard_event.set()
             self._cancel_event.set()
+            self._show_cancelling()
+
+    def _show_cancelling(self):
+        """
+        Cancelling isn't instant -- rl.training.train_model() still has to stop
+        model.learn() at its next step check and (unless discarding) run a final
+        evaluation/save pass before it's actually done -- so leave a visible
+        "Cancelling..." trail instead of letting the button keep inviting a
+        confusing second click on an already-in-flight cancel.
+        """
+        self.start_btn.configure(text="Cancelling...", state="disabled", text_color=RED, text_color_disabled=RED)
+        if self.log_box is not None:
+            self.log_box.configure(state="normal")
+            self.log_box.insert("end", "Cancelling...\n")
+            self.log_box.see("end")
+            self.log_box.configure(state="disabled")
 
     def _handle_back(self):
         if not self._is_training:

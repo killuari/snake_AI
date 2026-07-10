@@ -2,6 +2,7 @@
 ui/app.py - App: the root window, screen registry, and navigation.
 """
 
+import tkinter.font as tkfont
 import customtkinter as ctk
 
 from ui.theme import BG, MIN_WIDTH, AMBER, GREEN, RED
@@ -11,6 +12,20 @@ from ui.screens.home import HomeScreen
 from ui.screens.play import PlayScreen
 from ui.screens.test_model import TestModelScreen
 from ui.screens.train_model import TrainModelScreen
+
+
+def _pick_monospace_family():
+    """
+    Pick the first available real monospace family instead of hardcoding one --
+    font availability differs across Linux/Windows/macOS. "Courier" is one of
+    Tk's built-in core families and is guaranteed to exist even if none of the
+    preferred candidates are installed.
+    """
+    available = set(tkfont.families())
+    for candidate in ("Consolas", "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Menlo", "Courier New"):
+        if candidate in available:
+            return candidate
+    return "Courier"
 
 
 def _force_redraw(widget):
@@ -73,7 +88,7 @@ class App(ctk.CTk):
         self.font_card_title = ctk.CTkFont(family="Noto Sans", size=20, weight="bold")
         self.font_body = ctk.CTkFont(family="Noto Sans", size=15)
         self.font_small = ctk.CTkFont(family="Noto Sans", size=13)
-        self.font_mono = self.font_body
+        self.font_mono = ctk.CTkFont(family=_pick_monospace_family(), size=13)
 
         container = ctk.CTkFrame(self, fg_color=BG)
         container.pack(fill="both", expand=True)

@@ -33,8 +33,8 @@ class PlayScreen(SubScreen):
         # Log box packed (bottom-most) before the button (which then stacks above
         # it) so the log always claims its own space from the window's bottom
         # edge first, instead of being the first thing clipped on a small window.
-        log_box = self._make_log_box(self.body)
-        log_box.pack(side="bottom", fill="both", expand=True)
+        log_box = self._make_log_box(self.body, height=90)
+        log_box.pack(side="bottom", fill="x")
 
         self.start_btn = _make_outline_button(self.body, "Start Game", GREEN, self._start, app.font_body, width=200, height=44)
         self.start_btn.pack(side="bottom", pady=(0, 16))

@@ -66,7 +66,7 @@ class SubScreen(ctk.CTkFrame):
     def _make_log_box(self, parent, height=140):
         self.log_box = ctk.CTkTextbox(
             parent, font=self.app.font_mono, fg_color=PANEL, text_color=TEXT_MUTED,
-            corner_radius=RADIUS, height=height, state="disabled", wrap="word",
+            corner_radius=RADIUS, height=height, state="disabled", wrap="none",
         )
         return self.log_box
 
