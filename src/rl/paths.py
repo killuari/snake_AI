@@ -8,13 +8,15 @@ Checkpoint directory convention:
         evaluation.json
         continue_markers.json
         best_score.json
-        logs/tb_0/events.out.tfevents...
+        logs/tb_0/events.out.tfevents...       ("last" track -- the live, continuous one)
+        logs/tb_best/events.out.tfevents...    (rebuilt snapshot of best_model's own history)
         replay_buffer.pkl (DQN only)
 """
 
 import os
 import glob
 import json
+import shutil
 
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
@@ -123,7 +125,7 @@ def _existing_max_step(path):
     """Highest step already logged in path's tensorboard run dir across all
     plotted tags, or None if nothing's logged yet. Used to detect whether a
     run about to start would "rewind" relative to what's already plotted
-    (see _clear_stale_tb_history)."""
+    (see _seed_run_dir_from_best/_backup_run_dir)."""
     run_dir = tb_run_dir(path)
     if not os.path.isdir(run_dir):
         return None
@@ -138,26 +140,89 @@ def _existing_max_step(path):
     return max_step
 
 
-def _clear_stale_tb_history(path, pre_existing_files):
+def tb_best_dir(path):
+    """Persisted, truncated-at-best snapshot of the best checkpoint's own
+    tensorboard history -- rebuilt (see _rebuild_tb_best) whenever
+    best_model.zip changes, used to seed a fresh "Continue from Best" run's
+    live plot (see _seed_run_dir_from_best) so it never shows the (soon to
+    be superseded) "last" history overlapping with new data, not even
+    momentarily during training."""
+    return os.path.join(tensorboard_log_dir(path), "tb_best")
+
+
+def _rebuild_tb_best(path, up_to_step):
     """
-    Delete all pre-existing tensorboard event file(s) for this model -- used
-    when a run's resume point would otherwise overlap with data already
-    plotted for later steps (a "New Model" overwrite starting back at step 0,
-    or a "Continue Existing" resume from an earlier checkpoint -- e.g. "Best"
-    -- than what's already been logged). Without this, EventAccumulator
-    merges the old (further-along) file with the new (earlier-starting) one,
-    producing two overlapping curves for the same step range. Trades away
-    the old, now-superseded visual history for a clean plot going forward --
-    there is no supported way to surgically truncate a .tfevents file to
-    keep only the still-valid prefix.
+    (Re)writes tb_best_dir(path) from scratch: every scalar event in
+    tb_run_dir(path) (the live/"last" track, which just finished writing
+    this run's data) with step <= up_to_step, re-emitted through a real
+    SummaryWriter. There is no supported way to surgically truncate a raw
+    .tfevents file to keep only a valid prefix, so this replays the filtered
+    events into a fresh file instead.
     """
     run_dir = tb_run_dir(path)
     if not os.path.isdir(run_dir):
         return
-    for name in pre_existing_files:
-        stale = os.path.join(run_dir, name)
-        if os.path.exists(stale):
-            os.remove(stale)
+    ea = EventAccumulator(run_dir, size_guidance={"scalars": 0})  # 0 = unlimited, need the full history for a faithful copy
+    ea.Reload()
+
+    best_dir = tb_best_dir(path)
+    if os.path.isdir(best_dir):
+        shutil.rmtree(best_dir)
+    os.makedirs(best_dir, exist_ok=True)
+
+    from torch.utils.tensorboard import SummaryWriter
+    writer = SummaryWriter(log_dir=best_dir)
+    for tag in ea.Tags().get("scalars", []):
+        for event in ea.Scalars(tag):
+            if event.step <= up_to_step:
+                writer.add_scalar(tag, event.value, event.step, walltime=event.wall_time)
+    writer.close()
+
+
+def _backup_run_dir(path):
+    """Move the current tensorboard run dir aside instead of touching it
+    directly, so a rewind's pre-emptive reseed (see _seed_run_dir_from_best)
+    can be undone exactly (see _restore_run_dir_backup) if the run ends up
+    discarded."""
+    run_dir = tb_run_dir(path)
+    backup_dir = run_dir + ".bak"
+    if os.path.isdir(backup_dir):
+        shutil.rmtree(backup_dir)
+    if os.path.isdir(run_dir):
+        shutil.move(run_dir, backup_dir)
+
+
+def _restore_run_dir_backup(path):
+    """Undo _backup_run_dir(): discard whatever this (now-discarded) run
+    wrote/seeded, and restore the original run dir exactly as it was."""
+    run_dir = tb_run_dir(path)
+    backup_dir = run_dir + ".bak"
+    if os.path.isdir(run_dir):
+        shutil.rmtree(run_dir)
+    if os.path.isdir(backup_dir):
+        shutil.move(backup_dir, run_dir)
+
+
+def _discard_run_dir_backup(path):
+    """Permanently discard a no-longer-needed backup (the run succeeded)."""
+    backup_dir = tb_run_dir(path) + ".bak"
+    if os.path.isdir(backup_dir):
+        shutil.rmtree(backup_dir)
+
+
+def _seed_run_dir_from_best(path):
+    """Copy tb_best_dir(path)'s content into a fresh tb_run_dir(path) --
+    called after _backup_run_dir() when resuming from a checkpoint whose
+    timestep is behind what's already logged (a "rewind", i.e. "Continue
+    from Best" when Best trails Last), so the live plot picks up exactly
+    where the best checkpoint's own history left off, instead of the old
+    "last" track's (now irrelevant) history."""
+    run_dir = tb_run_dir(path)
+    best_dir = tb_best_dir(path)
+    if os.path.isdir(run_dir):
+        shutil.rmtree(run_dir)
+    if os.path.isdir(best_dir):
+        shutil.copytree(best_dir, run_dir)
 
 
 def _finalize_checkpoint(path, prefix, total_timesteps):

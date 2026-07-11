@@ -1,0 +1,71 @@
+{
+    "timesteps": 233676,
+    "last_model": {
+        "deterministic": {
+            "mean_score": 1.1,
+            "episodes": 10,
+            "scores": [
+                0.0,
+                0.0,
+                3.0,
+                3.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                5.0
+            ]
+        },
+        "stochastic": {
+            "mean_score": 1.7,
+            "episodes": 10,
+            "scores": [
+                2.0,
+                0.0,
+                2.0,
+                2.0,
+                3.0,
+                2.0,
+                2.0,
+                1.0,
+                1.0,
+                2.0
+            ]
+        }
+    },
+    "best_model": {
+        "deterministic": {
+            "mean_score": 0.7,
+            "episodes": 10,
+            "scores": [
+                0.0,
+                0.0,
+                3.0,
+                0.0,
+                3.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0
+            ]
+        },
+        "stochastic": {
+            "mean_score": 2.4,
+            "episodes": 10,
+            "scores": [
+                4.0,
+                3.0,
+                3.0,
+                2.0,
+                2.0,
+                2.0,
+                2.0,
+                1.0,
+                3.0,
+                2.0
+            ]
+        }
+    }
+}

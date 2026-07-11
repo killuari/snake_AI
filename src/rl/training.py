@@ -23,7 +23,9 @@ from game.environment import SnakeGameEnvironment, make_snake_env
 from rl.paths import (
     GRID_SIZE, PPO_PATH, DQN_PATH, TB_RUN_NAME, tensorboard_log_dir, replay_buffer_path,
     _find_checkpoint, _finalize_checkpoint, _record_continue_marker,
-    _snapshot_run_dir, _discard_run_artifacts, _existing_max_step, _clear_stale_tb_history,
+    _snapshot_run_dir, _discard_run_artifacts, _existing_max_step,
+    _backup_run_dir, _restore_run_dir_backup, _discard_run_dir_backup,
+    _seed_run_dir_from_best, _rebuild_tb_best, tb_best_dir,
     _read_best_score, _write_best_score,
 )
 from rl.callbacks import DeathLogger, PeriodicCheckpoint
@@ -394,13 +396,44 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         callbacks.append(_FrameCallback(on_frame))
 
     # Snapshot the tensorboard run dir's contents before .learn() starts
-    # writing to it, so a discarded run can be told apart from whatever was
-    # legitimately there already (see the discard_event handling below).
+    # writing to it, so a discarded (and NOT reseeded, see needs_reseed below)
+    # run can be told apart from whatever was legitimately there already
+    # (see the discard_event handling below).
     pre_existing_tb_files = _snapshot_run_dir(path)
     # Highest step already plotted for this model, if any -- compared against
-    # this run's resume point below (once known) to detect a "rewind" (see
-    # _clear_stale_tb_history's docstring).
+    # this run's resume point (0 for "New Model", the loaded checkpoint's
+    # timestep for "Continue Existing") to detect a "rewind": a "New Model"
+    # overwrite starting back at step 0, or a "Continue Existing" resume from
+    # an earlier checkpoint (e.g. "Best") than what's already logged. Without
+    # reseeding, the old, now-superseded history would overlap with this
+    # run's freshly-written data at the same steps, and -- since the
+    # overlap-safe reseed below has to happen BEFORE .learn() starts writing,
+    # not after it finishes -- the live plot would show that overlap for the
+    # run's entire duration, not just in the final saved result.
     existing_max_step = _existing_max_step(path)
+    resume_point = continue_marker_step if continue_marker_step is not None else 0
+    needs_reseed = existing_max_step is not None and resume_point < existing_max_step
+    if needs_reseed:
+        if resume_point > 0 and not os.path.isdir(tb_best_dir(path)):
+            # Backward compatibility: a model whose best/last already
+            # diverged before this two-track mechanism existed (or that
+            # simply never had a best_model_updated run since) has no
+            # tb_best snapshot yet to seed from -- build one now, from the
+            # CURRENT "last" track's own history (still intact at this
+            # point, before the backup below), truncated at this model's
+            # best timestep. Without this, seeding below finds nothing to
+            # copy and the live plot starts completely blank instead of
+            # showing this checkpoint's real history.
+            _rebuild_tb_best(path, resume_point)
+        # Move the current ("last") history aside rather than deleting it
+        # outright, so a discarded run can restore it exactly (see the
+        # discard_event handling below) -- then seed the live run dir with
+        # the resumed checkpoint's OWN history (tb_best, if resuming from a
+        # real earlier point) or leave it empty (a "New Model" overwrite,
+        # resume_point == 0, has no prior history of its own to seed from).
+        _backup_run_dir(path)
+        if resume_point > 0:
+            _seed_run_dir_from_best(path)
 
     # train_env/eval_env are real OS subprocesses (SubprocVecEnv) -- guarantee
     # they're always closed exactly once, whether training finishes normally,
@@ -427,9 +460,14 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                     os.remove(stray)
             # Same for the tensorboard event file(s) this attempt wrote --
             # without this they'd sit in the same tb_0 folder as legitimate
-            # runs and get merged into future plots (see
-            # _discard_run_artifacts's docstring).
-            _discard_run_artifacts(path, pre_existing_tb_files)
+            # runs and get merged into future plots. Two cases: if we backed
+            # up+reseeded before training (needs_reseed), undo that exactly;
+            # otherwise (the normal, non-rewinding case) fall back to the
+            # snapshot-diff cleanup (see _discard_run_artifacts's docstring).
+            if needs_reseed:
+                _restore_run_dir_backup(path)
+            else:
+                _discard_run_artifacts(path, pre_existing_tb_files)
             return
 
         # This run wasn't discarded (finished normally, or was cancelled but
@@ -439,17 +477,10 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         if continue_marker_step is not None:
             _record_continue_marker(path, continue_marker_step)
 
-        # If this run's resume point (0 for "New Model", the loaded
-        # checkpoint's timestep for "Continue Existing") is behind what was
-        # already plotted for this model -- a "New Model" overwrite starting
-        # back at step 0, or a "Continue Existing" resume from an earlier
-        # checkpoint (e.g. "Best") than what's already logged -- the old,
-        # now-superseded history would otherwise overlap with this run's
-        # freshly-written data at the same steps (see
-        # _clear_stale_tb_history's docstring).
-        resume_point = continue_marker_step if continue_marker_step is not None else 0
-        if existing_max_step is not None and resume_point < existing_max_step:
-            _clear_stale_tb_history(path, pre_existing_tb_files)
+        if needs_reseed:
+            # The run succeeded (or was cancelled-and-kept) -- the pre-run
+            # backup is no longer needed.
+            _discard_run_dir_backup(path)
 
         # EvalCallback only evaluates every eval_freq calls, so the final stretch of
         # training (up to eval_freq-1 calls) may never have been checked -- evaluate
@@ -522,6 +553,12 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
 
         if best_model_updated:
             _write_best_score(path, best_model_score)
+            # Keep tb_best in sync with the checkpoint it describes -- a
+            # truncated-at-best_model_timestep snapshot of this run's own
+            # (now current) "last" history, so the NEXT "Continue from Best"
+            # (if any) can seed its live plot from it (see
+            # _seed_run_dir_from_best).
+            _rebuild_tb_best(path, best_model_timestep)
     finally:
         train_env.close()
         eval_env.close()
