@@ -22,6 +22,11 @@ _PLOTTED_TAGS = [
 
 _DPI = 100
 
+# Default is 10,000 points per tag, after which older points get randomly
+# evicted (reservoir sampling) -- raised so long production runs (millions of
+# timesteps) don't lose historical resolution.
+_SIZE_GUIDANCE = {"scalars": 100_000}
+
 
 class LiveTrainingPlot(ctk.CTkFrame):
     """A small reward/loss plot that redraws whenever `.update(log_dir)` is
@@ -69,7 +74,7 @@ class LiveTrainingPlot(ctk.CTkFrame):
         if log_dir is None:
             return
 
-        ea = EventAccumulator(log_dir)
+        ea = EventAccumulator(log_dir, size_guidance=_SIZE_GUIDANCE)
         ea.Reload()
         available = ea.Tags().get("scalars", [])
         if not any(tag in available for tag, _ in _PLOTTED_TAGS):
@@ -112,7 +117,14 @@ class LiveTrainingPlot(ctk.CTkFrame):
         for tag, _ in _PLOTTED_TAGS:
             if tag not in available:
                 continue  # no data logged for this tag yet -- leave its axis empty but visible
-            events = ea.Scalars(tag)
+            # Sorted by step -- EventAccumulator merges multiple event files
+            # (e.g. across "Continue Existing" runs) in file-processing order,
+            # not step order, so an unsorted plot can connect distant points
+            # with a long diagonal line whenever two files' step ranges
+            # aren't already contiguous (see rl.paths._clear_stale_tb_history
+            # for the data-level fix; this is a defensive backstop for any
+            # other multi-file merge situation).
+            events = sorted(ea.Scalars(tag), key=lambda e: e.step)
             self._lines[tag].set_data([e.step for e in events], [e.value for e in events])
             self._axes[tag].relim()
             self._axes[tag].autoscale_view()

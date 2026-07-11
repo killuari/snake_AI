@@ -7,6 +7,7 @@ Checkpoint directory convention:
         last_model_{timesteps}.zip
         evaluation.json
         continue_markers.json
+        best_score.json
         logs/tb_0/events.out.tfevents...
         replay_buffer.pkl (DQN only)
 """
@@ -14,6 +15,8 @@ Checkpoint directory convention:
 import os
 import glob
 import json
+
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 # Default grid cell size in pixels (used for all environments created here)
 GRID_SIZE = 30
@@ -43,6 +46,29 @@ def tensorboard_log_dir(path):
     """Nested tensorboard log directory for a model's checkpoint folder --
     pass as tensorboard_log= to DQN()/DQN.load()/PPO()/PPO.load()."""
     return os.path.join(path, "logs")
+
+
+def best_score_path(path):
+    """Path to the persisted true best mean_reward score for a model --
+    written whenever best_model.zip changes, and read back to seed
+    EvalCallback.best_mean_reward on "Continue Existing" (see
+    rl.training.train_model), since EvalCallback itself always starts a
+    fresh instance at -inf, with no memory of a model's actual historical
+    best across continuations."""
+    return os.path.join(path, "best_score.json")
+
+
+def _read_best_score(path):
+    p = best_score_path(path)
+    if not os.path.exists(p):
+        return None
+    with open(p) as file:
+        return json.load(file).get("mean_reward")
+
+
+def _write_best_score(path, mean_reward):
+    with open(best_score_path(path), "w") as file:
+        json.dump({"mean_reward": mean_reward}, file)
 
 
 def replay_buffer_path(path):
@@ -91,6 +117,47 @@ def _discard_run_artifacts(path, pre_existing_files):
         logs_dir = tensorboard_log_dir(path)
         if os.path.isdir(logs_dir) and not os.listdir(logs_dir):
             os.rmdir(logs_dir)
+
+
+def _existing_max_step(path):
+    """Highest step already logged in path's tensorboard run dir across all
+    plotted tags, or None if nothing's logged yet. Used to detect whether a
+    run about to start would "rewind" relative to what's already plotted
+    (see _clear_stale_tb_history)."""
+    run_dir = tb_run_dir(path)
+    if not os.path.isdir(run_dir):
+        return None
+    ea = EventAccumulator(run_dir)
+    ea.Reload()
+    max_step = None
+    for tag in ea.Tags().get("scalars", []):
+        events = ea.Scalars(tag)
+        if events:
+            tag_max = max(e.step for e in events)
+            max_step = tag_max if max_step is None else max(max_step, tag_max)
+    return max_step
+
+
+def _clear_stale_tb_history(path, pre_existing_files):
+    """
+    Delete all pre-existing tensorboard event file(s) for this model -- used
+    when a run's resume point would otherwise overlap with data already
+    plotted for later steps (a "New Model" overwrite starting back at step 0,
+    or a "Continue Existing" resume from an earlier checkpoint -- e.g. "Best"
+    -- than what's already been logged). Without this, EventAccumulator
+    merges the old (further-along) file with the new (earlier-starting) one,
+    producing two overlapping curves for the same step range. Trades away
+    the old, now-superseded visual history for a clean plot going forward --
+    there is no supported way to surgically truncate a .tfevents file to
+    keep only the still-valid prefix.
+    """
+    run_dir = tb_run_dir(path)
+    if not os.path.isdir(run_dir):
+        return
+    for name in pre_existing_files:
+        stale = os.path.join(run_dir, name)
+        if os.path.exists(stale):
+            os.remove(stale)
 
 
 def _finalize_checkpoint(path, prefix, total_timesteps):

@@ -6,7 +6,7 @@ import customtkinter as ctk
 
 from rl.playback import test_model
 from ui.theme import PANEL, BORDER, TEXT, TEXT_MUTED, AMBER, RED, RADIUS
-from ui.widgets import _make_content_column, _make_choice_row, _make_slider_row, _make_outline_button, _bind_recursive, _enable_mousewheel, _speed_label, _make_model_badge
+from ui.widgets import _make_content_column, _make_choice_row, _make_slider_row, _make_outline_button, _bind_recursive, _enable_mousewheel, _speed_label, _make_model_badge, _format_timesteps
 from ui.models import _discover_models
 from ui.screens.base import SubScreen
 
@@ -64,9 +64,9 @@ class TestModelScreen(SubScreen):
         header.pack(fill="x", padx=12, pady=(10, 2))
         _make_model_badge(header, info, self.app.font_body, TEXT)
 
-        steps = info["best_timesteps"] if info["best_timesteps"] is not None else info["last_timesteps"]
-        if steps is not None:
-            ctk.CTkLabel(header, text=f"{steps:,} timesteps", font=self.app.font_small, text_color=TEXT_MUTED).pack(side="right")
+        timesteps_text = _format_timesteps(info)
+        if timesteps_text:
+            ctk.CTkLabel(header, text=timesteps_text, font=self.app.font_small, text_color=TEXT_MUTED).pack(side="right")
 
         evaluation = info["evaluation"]
         if evaluation:

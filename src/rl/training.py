@@ -13,7 +13,7 @@ import time
 import numpy as np
 
 from stable_baselines3 import PPO, DQN
-from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold, BaseCallback
+from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold, BaseCallback, CallbackList
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -23,7 +23,8 @@ from game.environment import SnakeGameEnvironment, make_snake_env
 from rl.paths import (
     GRID_SIZE, PPO_PATH, DQN_PATH, TB_RUN_NAME, tensorboard_log_dir, replay_buffer_path,
     _find_checkpoint, _finalize_checkpoint, _record_continue_marker,
-    _snapshot_run_dir, _discard_run_artifacts,
+    _snapshot_run_dir, _discard_run_artifacts, _existing_max_step, _clear_stale_tb_history,
+    _read_best_score, _write_best_score,
 )
 from rl.callbacks import DeathLogger, PeriodicCheckpoint
 from rl.feature_extractors import SnakeCombinedExtractor
@@ -292,17 +293,49 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     reward_threshold = max(10, int(0.3 * grid_width * grid_height))
     stop_callback = StopTrainingOnRewardThreshold(reward_threshold=reward_threshold, verbose=1)
 
+    class _RecordBestTimestep(BaseCallback):
+        """Captures self.num_timesteps whenever EvalCallback finds a new best
+        (fires exactly when EvalCallback saves best_model.zip, before renaming
+        it with a timestep suffix below) -- _finalize_checkpoint() must use
+        THIS value for "best_model"'s filename suffix, not the run's final
+        total, otherwise the filename (and thus ui.models._discover_models()'s
+        best_timesteps, shown throughout the UI, and used as the "Continue
+        Existing" resume point) silently claims best_model.zip is from later
+        in training than it actually is."""
+        def __init__(self):
+            super().__init__()
+            self.value = None
+
+        def _on_step(self) -> bool:
+            self.value = self.num_timesteps
+            return True
+
+    record_best_timestep = _RecordBestTimestep()
+
     # Evaluate periodically, save best model, and optionally stop early
     eval_freq = max((timesteps // 25) // num_envs, 1)    # ~25 evaluations per training run
     eval_callback = EvalCallback(
         eval_env,
-        callback_on_new_best=stop_callback,
+        callback_on_new_best=CallbackList([stop_callback, record_best_timestep]),
         best_model_save_path=path,
         eval_freq=eval_freq,
         n_eval_episodes=10,                                  # Episodes per evaluation
         verbose=1,
         deterministic=True
     )
+    if not new:
+        # EvalCallback.__init__ always starts best_mean_reward at -inf, with
+        # no memory of a model's actual historical best across continuations
+        # (a fresh instance is constructed on every train_model() call) --
+        # without seeding it here, the very first eval of ANY continuation
+        # would always count as a "new best" and overwrite best_model.zip,
+        # even if this continuation is actually performing worse than the
+        # model's true historical best. Not done for new=True: a fresh model
+        # (even one overwriting an existing config) should start with no
+        # inherited "best" baseline at all.
+        previous_best_score = _read_best_score(path)
+        if previous_best_score is not None:
+            eval_callback.best_mean_reward = previous_best_score
 
     # Custom callback to log death causes (max-step vs collision)
     death_logger = DeathLogger()
@@ -364,6 +397,10 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # writing to it, so a discarded run can be told apart from whatever was
     # legitimately there already (see the discard_event handling below).
     pre_existing_tb_files = _snapshot_run_dir(path)
+    # Highest step already plotted for this model, if any -- compared against
+    # this run's resume point below (once known) to detect a "rewind" (see
+    # _clear_stale_tb_history's docstring).
+    existing_max_step = _existing_max_step(path)
 
     # train_env/eval_env are real OS subprocesses (SubprocVecEnv) -- guarantee
     # they're always closed exactly once, whether training finishes normally,
@@ -402,6 +439,18 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
         if continue_marker_step is not None:
             _record_continue_marker(path, continue_marker_step)
 
+        # If this run's resume point (0 for "New Model", the loaded
+        # checkpoint's timestep for "Continue Existing") is behind what was
+        # already plotted for this model -- a "New Model" overwrite starting
+        # back at step 0, or a "Continue Existing" resume from an earlier
+        # checkpoint (e.g. "Best") than what's already logged -- the old,
+        # now-superseded history would otherwise overlap with this run's
+        # freshly-written data at the same steps (see
+        # _clear_stale_tb_history's docstring).
+        resume_point = continue_marker_step if continue_marker_step is not None else 0
+        if existing_max_step is not None and resume_point < existing_max_step:
+            _clear_stale_tb_history(path, pre_existing_tb_files)
+
         # EvalCallback only evaluates every eval_freq calls, so the final stretch of
         # training (up to eval_freq-1 calls) may never have been checked -- evaluate
         # once more now so the just-finished model is guaranteed to be compared
@@ -415,9 +464,38 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
 
         final_mean_reward = _scalar_mean_reward(final_mean_reward)
         best_mean_reward = _scalar_mean_reward(eval_callback.best_mean_reward)
+
+        # Bake the cumulative trained timesteps into the checkpoint filenames (e.g.
+        # "best_model_3000000.zip"). model.num_timesteps already reflects the right
+        # value here: it started at 0 for a fresh model (new=True), or continued
+        # counting up from the loaded checkpoint's timesteps (new=False, since
+        # model.learn() above was called with reset_num_timesteps=False) -- so
+        # continuing training accumulates instead of overwriting the count.
+        total_timesteps_trained = model.num_timesteps
+        # "best_model"'s filename suffix must match whatever timestep its
+        # actual weights were saved at, not the run's final total -- default
+        # to record_best_timestep.value (set by EvalCallback's callback_on_new_best,
+        # see above), which is exactly that. best_model_score mirrors it in
+        # parallel (see best_score_path's docstring) -- eval_callback.best_mean_reward
+        # already reflects the same moment, since it's only ever updated
+        # (line "self.best_mean_reward = float(mean_reward)" inside SB3's
+        # EvalCallback._on_step()) immediately before callback_on_new_best
+        # fires. Now that eval_callback.best_mean_reward is seeded from this
+        # model's true historical best on a continuation (see above), this
+        # run may genuinely find no improvement at all -- record_best_timestep.value
+        # then stays None and the block below never fires, correctly leaving
+        # the existing best_model_*.zip untouched.
+        best_model_timestep = record_best_timestep.value if record_best_timestep.value is not None else total_timesteps_trained
+        best_model_score = eval_callback.best_mean_reward
+
         if final_mean_reward > best_mean_reward:
             print(f"Final evaluation found a new best model: {final_mean_reward:.2f} (previous best: {best_mean_reward:.2f})")
             model.save(os.path.join(path, "best_model"))
+            # This save supersedes EvalCallback's (if any) -- it's the just-
+            # finished model's own final state, so its filename must reflect
+            # the final total, not whatever EvalCallback last recorded.
+            best_model_timestep = total_timesteps_trained
+            best_model_score = final_mean_reward
 
         # Always save the final model (in addition to the best model saved by EvalCallback)
         model.save(os.path.join(path, "last_model"))
@@ -432,15 +510,18 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
             # before this feature existed.
             model.save_replay_buffer(replay_buffer_path(path))
 
-        # Bake the cumulative trained timesteps into the checkpoint filenames (e.g.
-        # "best_model_3000000.zip"). model.num_timesteps already reflects the right
-        # value here: it started at 0 for a fresh model (new=True), or continued
-        # counting up from the loaded checkpoint's timesteps (new=False, since
-        # model.learn() above was called with reset_num_timesteps=False) -- so
-        # continuing training accumulates instead of overwriting the count.
-        total_timesteps_trained = model.num_timesteps
-        _finalize_checkpoint(path, "best_model", total_timesteps_trained)
+        # Whether a genuinely new best_model.zip exists to finalize -- False
+        # is now a real, expected outcome for a continuation that never beat
+        # this model's true historical best (see the seeding above), in
+        # which case the existing best_model_*.zip/best_score.json are
+        # correctly left completely untouched.
+        best_model_updated = os.path.exists(os.path.join(path, "best_model.zip"))
+
+        _finalize_checkpoint(path, "best_model", best_model_timestep)
         _finalize_checkpoint(path, "last_model", total_timesteps_trained)
+
+        if best_model_updated:
+            _write_best_score(path, best_model_score)
     finally:
         train_env.close()
         eval_env.close()

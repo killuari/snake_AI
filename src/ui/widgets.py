@@ -330,3 +330,19 @@ def _make_model_badge(parent, info, font, text_color):
         row, text=f"  Grid {info['grid_width']}x{info['grid_height']}  FOV {info['fov']}",
         font=font, text_color=text_color,
     ).pack(side="left")
+
+
+def _format_timesteps(info):
+    """Both best/last timestep counts, formatted for display -- e.g.
+    "best: 1,440  |  last: 6,000". Shows both since they can genuinely
+    differ (best_model.zip is saved at whichever timestep EvalCallback
+    last found an improvement, not necessarily the run's final one -- see
+    rl.training.train_model's _RecordBestTimestep). Omits either half if
+    that checkpoint doesn't exist yet (e.g. right after a discard left only
+    "last")."""
+    parts = []
+    if info["best_timesteps"] is not None:
+        parts.append(f"best: {info['best_timesteps']:,}")
+    if info["last_timesteps"] is not None:
+        parts.append(f"last: {info['last_timesteps']:,}")
+    return "  |  ".join(parts)
