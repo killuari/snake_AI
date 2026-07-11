@@ -12,7 +12,7 @@ An advanced Reinforcement Learning pipeline featuring a custom-built Game Engine
 
 ## Launcher
 
-Everything is driven from a single dark-mode desktop app (`python main.py`) — no editing scripts or calling functions by hand. Four modes, each a full screen: **Play** yourself, **Test Model** to watch a trained agent, **Train Model** to start or continue a training run, and **Exit**.
+Everything is driven from a single dark-mode desktop app (`python src/main.py`) — no editing scripts or calling functions by hand. Four modes, each a full screen: **Play** yourself, **Test Model** to watch a trained agent, **Train Model** to start or continue a training run, and **Exit**.
 
 <p align="center">
   <img src="docs/screenshots/home.png" alt="Launcher home screen" width="420">
@@ -99,10 +99,12 @@ pip install pygame numpy gymnasium stable-baselines3 optuna customtkinter
 ### 3. Run It
 
 ```bash
-python main.py
+python src/main.py
 ```
 
-This opens the launcher — pick **Play**, **Test Model**, or **Train Model** from there. `Training/` (and `Training/SAVED_MODELS/`) is created automatically as needed; nothing has to exist beforehand.
+Run this from the repo root (not from inside `src/`) — `Training/` (and `Training/SAVED_MODELS/`) is resolved relative to the current working directory and is created automatically as needed; nothing has to exist beforehand.
+
+This opens the launcher — pick **Play**, **Test Model**, or **Train Model** from there.
 
 Everything is also directly importable for scripting, e.g.:
 
@@ -119,24 +121,26 @@ test_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3)
 ## Project Structure
 
 ```text
-├── main.py                       # Entry point: launches the UI
-├── game/
-│   ├── snake_game.py             # Pygame-based game engine
-│   ├── environment.py            # Gymnasium environment wrapper
-│   └── game_over.py              # Shared death animation + game-over overlay
-├── rl/
-│   ├── training.py               # train_model()
-│   ├── playback.py               # play_game(), test_model()
-│   ├── hyperparameter_tuning.py  # Optuna DQN search
-│   ├── feature_extractors.py     # CNN extractor for GRID observation mode
-│   ├── callbacks.py              # DeathLogger training callback
-│   ├── paths.py                  # Checkpoint directory layout + grid presets
-│   └── check_models.py           # Manual "do all saved models load?" check
-├── ui/
-│   ├── app.py                    # App root window + navigation
-│   ├── theme.py, widgets.py      # Shared color palette + widget factories
-│   ├── models.py                 # Checkpoint discovery for the UI
-│   └── screens/                  # home, play, test_model, train_model, base
+├── src/
+│   ├── main.py                   # Entry point: launches the UI
+│   ├── game/
+│   │   ├── snake_game.py         # Pygame-based game engine
+│   │   ├── environment.py        # Gymnasium environment wrapper
+│   │   └── game_over.py          # Shared death animation + game-over overlay
+│   ├── rl/
+│   │   ├── training.py           # train_model()
+│   │   ├── playback.py           # play_game(), test_model()
+│   │   ├── hyperparameter_tuning.py  # Optuna DQN search
+│   │   ├── feature_extractors.py # CNN extractor for GRID observation mode
+│   │   ├── callbacks.py          # DeathLogger training callback
+│   │   ├── paths.py              # Checkpoint directory layout + grid presets
+│   │   └── check_models.py       # Manual "do all saved models load?" check
+│   └── ui/
+│       ├── app.py                # App root window + navigation
+│       ├── theme.py, widgets.py  # Shared color palette + widget factories
+│       ├── models.py             # Checkpoint discovery for the UI
+│       └── screens/              # home, play, test_model, train_model, base
+├── tests/                        # pytest suite for game/ and rl/
 └── Training/
     └── SAVED_MODELS/
         └── {PPO,DQN}/{FLAT,GRID}/GRID_{w}_{h}/FOV_RADIUS_{r}/
