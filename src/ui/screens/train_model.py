@@ -182,7 +182,7 @@ class TrainModelScreen(SubScreen):
                 if key in evaluation:
                     det = evaluation[key]["deterministic"]["mean_score"]
                     sto = evaluation[key]["stochastic"]["mean_score"]
-                    lines.append(f"{label}: deterministic {det:.1f} | stochastic {sto:.1f}")
+                    lines.append(f"{label} score: deterministic {det:.1f} | stochastic {sto:.1f}")
         lines.append("Starting a new run here will overwrite it once training finishes.")
         self.warning_label.configure(text="\n".join(lines))
         self.warning_frame.pack(fill="x", pady=(8, 0))
@@ -283,7 +283,7 @@ class TrainModelScreen(SubScreen):
                     det = evaluation[key]["deterministic"]["mean_score"]
                     sto = evaluation[key]["stochastic"]["mean_score"]
                     ctk.CTkLabel(
-                        frame, text=f"{label}: deterministic {det:.1f}  |  stochastic {sto:.1f}",
+                        frame, text=f"{label} score: deterministic {det:.1f}  |  stochastic {sto:.1f}",
                         font=self.app.font_small, text_color=TEXT_MUTED,
                     ).pack(anchor="w", padx=12, pady=(0, 2))
         else:

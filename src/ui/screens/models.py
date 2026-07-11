@@ -110,7 +110,7 @@ class ModelsScreen(SubScreen):
                     det = evaluation[key]["deterministic"]["mean_score"]
                     sto = evaluation[key]["stochastic"]["mean_score"]
                     ctk.CTkLabel(
-                        frame, text=f"{label}: deterministic {det:.1f}  |  stochastic {sto:.1f}",
+                        frame, text=f"{label} score: deterministic {det:.1f}  |  stochastic {sto:.1f}",
                         font=self.app.font_small, text_color=TEXT_MUTED,
                     ).pack(anchor="w", padx=12, pady=(0, 2))
         else:
