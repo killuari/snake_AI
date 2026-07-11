@@ -165,6 +165,24 @@ def play_game(grid_width=30, grid_height=20, fps=10):
     screen = pygame.display.set_mode((GRID_SIZE * grid_width, GRID_SIZE * grid_height))
     clock = pygame.time.Clock()
 
+    def _poll_quit():
+        """Handle quit events (window close or ESC key). Returns True if the
+        player wants to quit."""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return True
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return True
+        return False
+
+    def _draw_frame(game, started):
+        screen.fill(COLOR_BACKGROUND)
+        game.draw(screen)
+        draw_hud(screen, font, game.score)
+        if not started:
+            _draw_press_to_start(screen, font)
+        pygame.display.flip()
+
     final_score = 0
     while True:  # restart loop -- exits via break, either branch below
         direction = Direction.RIGHT
@@ -174,20 +192,9 @@ def play_game(grid_width=30, grid_height=20, fps=10):
         user_quit = False
 
         while not died and not user_quit:
-            clock.tick(fps)
-
-            # Handle quit events (window close or ESC key)
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    user_quit = True
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        user_quit = True
-
-            if user_quit:
+            if _poll_quit():
+                user_quit = True
                 break
-
-            screen.fill(COLOR_BACKGROUND)
 
             # Read keyboard input for direction changes.
             # Prevent reversing direction (e.g., can't go DOWN while moving UP).
@@ -217,13 +224,31 @@ def play_game(grid_width=30, grid_height=20, fps=10):
                 # Check and handle apple eating
                 game.eat_apple()
 
-            # Draw everything
-            game.draw(screen)
-            draw_hud(screen, font, game.score)
-            if not started:
-                _draw_press_to_start(screen, font)
+            _draw_frame(game, started)
 
-            pygame.display.flip()
+            # Hold this frame for 1000/fps ms, redrawing at a fixed ~60 FPS during
+            # the wait instead of a single blit -- decouples the apple's
+            # idle-shimmer/eat-ring animation smoothness (both real-time-based,
+            # see game/snake_game.py) from the chosen game speed, without
+            # changing how fast the snake actually moves. Skipped on the death
+            # frame so the game-over handoff below still freezes the exact
+            # moment of death, not a later redraw. Uses wall-clock time
+            # (get_ticks()), not accumulated clock.tick(60) deltas, which
+            # quantize in ~16.7ms steps and would overshoot noticeably at
+            # speeds close to or above 60fps.
+            if died or fps >= 60:
+                clock.tick(fps)
+            else:
+                target_ms = 1000.0 / fps
+                start = pygame.time.get_ticks()
+                while True:
+                    if _poll_quit():
+                        user_quit = True
+                        break
+                    _draw_frame(game, started)
+                    clock.tick(60)
+                    if pygame.time.get_ticks() - start >= target_ms:
+                        break
 
         final_score = game.score
         if user_quit:

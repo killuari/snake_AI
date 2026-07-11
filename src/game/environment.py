@@ -283,21 +283,14 @@ class SnakeGameEnvironment(gym.Env):
         if self.render_mode == "rgb_array":
             return self._render_frame()
         
-    def _render_frame(self):
-        """Internal render. Human mode: Pygame window. rgb_array: returns np array."""
-        # Lazy-init Pygame display for human mode
-        if self.screen is None and self.render_mode == "human":
-            pygame.init()
-            self.screen = pygame.display.set_mode((self.grid_size * self.grid_width, self.grid_size * self.grid_height))
-            self.font = pygame.font.Font(None, 45)
-            
-        if self.clock is None and self.render_mode == "human":
-            self.clock = pygame.time.Clock()
-
-        if self.snakeGame is None:
-            raise RuntimeError("Call reset() before rendering.")
-
-        # Draw on off-screen canvas
+    def _build_canvas(self):
+        """Draw the current game state onto a fresh off-screen surface. Split out
+        of _render_frame() so the human-mode hold loop below can call it repeatedly
+        (once per redraw) instead of once per game step -- otherwise the apple's
+        idle shimmer/eat-ring animations (both driven by real elapsed time, see
+        game/snake_game.py) only ever get sampled once per step, which reads as
+        choppy at low "speed" settings even though their actual duration is already
+        speed-independent."""
         canvas = pygame.Surface((self.grid_size * self.grid_width, self.grid_size * self.grid_height))
         canvas.fill(COLOR_BACKGROUND)
 
@@ -313,18 +306,59 @@ class SnakeGameEnvironment(gym.Env):
         if self.show_debug_overlay:
             self._draw_apple_direction_arrow(canvas)
 
-        if self.render_mode == "human" and self.screen is not None and self.clock is not None:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
-                    self.close()
-                    raise SystemExit
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
-                    self.show_debug_overlay = not self.show_debug_overlay
+        return canvas
 
-            self.screen.blit(canvas, (0, 0))
-            pygame.display.flip()
-            self.clock.tick(self.render_fps)
+    def _pump_events(self):
+        """Handle QUIT/ESC/'f'-toggle. Called every redraw (not just once per game
+        step) so ESC and the debug-overlay toggle react immediately instead of
+        only at the end of a held frame."""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                self.close()
+                raise SystemExit
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+                self.show_debug_overlay = not self.show_debug_overlay
+
+    def _render_frame(self):
+        """Internal render. Human mode: Pygame window. rgb_array: returns np array."""
+        # Lazy-init Pygame display for human mode
+        if self.screen is None and self.render_mode == "human":
+            pygame.init()
+            self.screen = pygame.display.set_mode((self.grid_size * self.grid_width, self.grid_size * self.grid_height))
+            self.font = pygame.font.Font(None, 45)
+
+        if self.clock is None and self.render_mode == "human":
+            self.clock = pygame.time.Clock()
+
+        if self.snakeGame is None:
+            raise RuntimeError("Call reset() before rendering.")
+
+        if self.render_mode == "human" and self.screen is not None and self.clock is not None:
+            # One game step happened; hold this frame for 1000/render_fps ms,
+            # redrawing at a fixed ~60 FPS during that wait instead of a single
+            # blit -- decouples animation smoothness from the chosen game speed
+            # without changing how fast the snake actually moves (the total
+            # wait is still exactly 1000/render_fps ms either way). Uses
+            # wall-clock time (get_ticks()) to decide when to stop, not
+            # accumulated clock.tick(60) deltas, which quantize in ~16.7ms
+            # steps and would overshoot noticeably at speeds like 40/50 fps.
+            if self.render_fps >= 60:
+                self._pump_events()
+                self.screen.blit(self._build_canvas(), (0, 0))
+                pygame.display.flip()
+                self.clock.tick(self.render_fps)
+            else:
+                target_ms = 1000.0 / self.render_fps
+                start = pygame.time.get_ticks()
+                while True:
+                    self._pump_events()
+                    self.screen.blit(self._build_canvas(), (0, 0))
+                    pygame.display.flip()
+                    self.clock.tick(60)
+                    if pygame.time.get_ticks() - start >= target_ms:
+                        break
         else:
+            canvas = self._build_canvas()
             return np.transpose(
                 np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
             )

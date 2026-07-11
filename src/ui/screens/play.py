@@ -7,7 +7,7 @@ import customtkinter as ctk
 from rl.playback import play_game
 from rl.paths import GRID_PRESETS
 from ui.theme import TEXT_MUTED, GREEN
-from ui.widgets import _make_content_column, _make_choice_row, _make_slider_row, _make_outline_button, _speed_label
+from ui.widgets import _make_content_column, _make_choice_row, _make_outline_button
 from ui.screens.base import SubScreen
 
 
@@ -23,7 +23,6 @@ class PlayScreen(SubScreen):
         # free width/height slider -- these are the only sizes any trained
         # model exists for, so a free size here would just be pointless choice.
         self.grid_seg = _make_choice_row(form, "Grid size", [p[0] for p in GRID_PRESETS], GRID_PRESETS[0][0], app.font_body)
-        self.speed_var = _make_slider_row(form, "Speed", 1, 5, 1, 1, app.font_body, value_fmt=_speed_label)
 
         ctk.CTkLabel(
             self.body, text="Controls: WASD to move, ESC or close the window to quit",
@@ -46,7 +45,9 @@ class PlayScreen(SubScreen):
             dict(
                 grid_width=grid_width,
                 grid_height=grid_height,
-                fps=int(self.speed_var.get()) * 10,
+                # Playing yourself isn't a speed to tune -- always the same,
+                # comfortable pace (play_game()'s own default).
+                fps=10,
             ),
             self.start_btn,
         )

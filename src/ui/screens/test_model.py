@@ -31,7 +31,7 @@ class TestModelScreen(SubScreen):
 
         controls = _make_content_column(self.body)
         self.mode_seg = _make_choice_row(controls, "Playback", ["Deterministic", "Stochastic"], "Deterministic", app.font_body)
-        self.speed_var = _make_slider_row(controls, "Speed", 1, 5, 1, 3, app.font_body, value_fmt=_speed_label)
+        self.speed_var = _make_slider_row(controls, "Speed", 1, 10, 1, 3, app.font_body, value_fmt=_speed_label)
         controls.pack(side="bottom", pady=(12, 0))
 
         list_frame = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS)
