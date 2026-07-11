@@ -6,6 +6,7 @@ import os
 import re
 import glob
 import json
+import shutil
 
 from rl.paths import PPO_PATH, DQN_PATH
 
@@ -81,3 +82,9 @@ def _discover_models():
         m["grid_width"], m["grid_height"], m["fov"],
     ))
     return models
+
+
+def _delete_model(path):
+    """Permanently delete a model's whole checkpoint folder (best/last .zip +
+    evaluation.json), as returned by _discover_models()'s "path" field."""
+    shutil.rmtree(path)

@@ -20,7 +20,7 @@ from gymnasium.wrappers import TimeLimit
 
 from game.environment import SnakeGameEnvironment, make_snake_env
 from rl.paths import GRID_SIZE, PPO_PATH, DQN_PATH, _find_checkpoint, _finalize_checkpoint
-from rl.callbacks import DeathLogger
+from rl.callbacks import DeathLogger, PeriodicCheckpoint
 from rl.feature_extractors import SnakeCombinedExtractor
 from rl.hyperparameter_tuning import load_best_params
 
@@ -181,11 +181,12 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     stop_callback = StopTrainingOnRewardThreshold(reward_threshold=reward_threshold, verbose=1)
 
     # Evaluate periodically, save best model, and optionally stop early
+    eval_freq = max((timesteps // 25) // num_envs, 1)    # ~25 evaluations per training run
     eval_callback = EvalCallback(
         eval_env,
         callback_on_new_best=stop_callback,
         best_model_save_path=path,
-        eval_freq=max((timesteps // 25) // num_envs, 1),    # ~25 evaluations per training run
+        eval_freq=eval_freq,
         n_eval_episodes=10,                                  # Episodes per evaluation
         verbose=1,
         deterministic=True
@@ -194,55 +195,71 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     # Custom callback to log death causes (max-step vs collision)
     death_logger = DeathLogger()
 
-    callbacks = [eval_callback, death_logger]
+    # Periodically saves last_model too (EvalCallback above already gives
+    # best_model this same safety net via its own eval-triggered saves), so a
+    # crash mid-run loses at most eval_freq calls of progress instead of the
+    # whole run. Reuses the same "~25 checkpoints per run" cadence instead of
+    # inventing a new constant.
+    periodic_checkpoint = PeriodicCheckpoint(save_freq=eval_freq, save_path=path)
+
+    callbacks = [eval_callback, death_logger, periodic_checkpoint]
     if cancel_event is not None:
         class _CancelCallback(BaseCallback):
             def _on_step(self) -> bool:
                 return not cancel_event.is_set()
         callbacks.append(_CancelCallback())
 
-    # Start training
-    model.learn(total_timesteps=timesteps, callback=callbacks, reset_num_timesteps=False)
+    # train_env/eval_env are real OS subprocesses (SubprocVecEnv) -- guarantee
+    # they're always closed exactly once, whether training finishes normally,
+    # is cancelled (discarded or not), or raises.
+    try:
+        # Start training
+        model.learn(total_timesteps=timesteps, callback=callbacks, reset_num_timesteps=False)
 
-    if discard_event is not None and discard_event.is_set():
-        print("\nTraining cancelled -- discarding this run (nothing saved).")
+        if discard_event is not None and discard_event.is_set():
+            print("\nTraining cancelled -- discarding this run (nothing saved).")
+            # Delete the live, unfinalized checkpoints PeriodicCheckpoint/
+            # EvalCallback wrote during this run, so a discarded run leaves the
+            # folder exactly as it was before it started -- _finalize_checkpoint()
+            # (which would otherwise clean these up) never runs on this path.
+            for prefix in ("best_model", "last_model"):
+                stray = os.path.join(path, f"{prefix}.zip")
+                if os.path.exists(stray):
+                    os.remove(stray)
+            return
+
+        # EvalCallback only evaluates every eval_freq calls, so the final stretch of
+        # training (up to eval_freq-1 calls) may never have been checked -- evaluate
+        # once more now so the just-finished model is guaranteed to be compared
+        # against the best one seen so far, and saved as the new best if it wins.
+        final_mean_reward, _ = evaluate_policy(model, eval_env, n_eval_episodes=eval_callback.n_eval_episodes, deterministic=True)
+
+        def _scalar_mean_reward(value) -> float:
+            if isinstance(value, (list, tuple, np.ndarray)):
+                return float(np.mean(value))
+            return float(value)
+
+        final_mean_reward = _scalar_mean_reward(final_mean_reward)
+        best_mean_reward = _scalar_mean_reward(eval_callback.best_mean_reward)
+        if final_mean_reward > best_mean_reward:
+            print(f"Final evaluation found a new best model: {final_mean_reward:.2f} (previous best: {best_mean_reward:.2f})")
+            model.save(os.path.join(path, "best_model"))
+
+        # Always save the final model (in addition to the best model saved by EvalCallback)
+        model.save(os.path.join(path, "last_model"))
+
+        # Bake the cumulative trained timesteps into the checkpoint filenames (e.g.
+        # "best_model_3000000.zip"). model.num_timesteps already reflects the right
+        # value here: it started at 0 for a fresh model (new=True), or continued
+        # counting up from the loaded checkpoint's timesteps (new=False, since
+        # model.learn() above was called with reset_num_timesteps=False) -- so
+        # continuing training accumulates instead of overwriting the count.
+        total_timesteps_trained = model.num_timesteps
+        _finalize_checkpoint(path, "best_model", total_timesteps_trained)
+        _finalize_checkpoint(path, "last_model", total_timesteps_trained)
+    finally:
         train_env.close()
         eval_env.close()
-        return
-
-    # EvalCallback only evaluates every eval_freq calls, so the final stretch of
-    # training (up to eval_freq-1 calls) may never have been checked -- evaluate
-    # once more now so the just-finished model is guaranteed to be compared
-    # against the best one seen so far, and saved as the new best if it wins.
-    final_mean_reward, _ = evaluate_policy(model, eval_env, n_eval_episodes=eval_callback.n_eval_episodes, deterministic=True)
-
-    def _scalar_mean_reward(value) -> float:
-        if isinstance(value, (list, tuple, np.ndarray)):
-            return float(np.mean(value))
-        return float(value)
-
-    final_mean_reward = _scalar_mean_reward(final_mean_reward)
-    best_mean_reward = _scalar_mean_reward(eval_callback.best_mean_reward)
-    if final_mean_reward > best_mean_reward:
-        print(f"Final evaluation found a new best model: {final_mean_reward:.2f} (previous best: {best_mean_reward:.2f})")
-        model.save(os.path.join(path, "best_model"))
-
-    # Always save the final model (in addition to the best model saved by EvalCallback)
-    model.save(os.path.join(path, "last_model"))
-
-    # Bake the cumulative trained timesteps into the checkpoint filenames (e.g.
-    # "best_model_3000000.zip"). model.num_timesteps already reflects the right
-    # value here: it started at 0 for a fresh model (new=True), or continued
-    # counting up from the loaded checkpoint's timesteps (new=False, since
-    # model.learn() above was called with reset_num_timesteps=False) -- so
-    # continuing training accumulates instead of overwriting the count.
-    total_timesteps_trained = model.num_timesteps
-    _finalize_checkpoint(path, "best_model", total_timesteps_trained)
-    _finalize_checkpoint(path, "last_model", total_timesteps_trained)
-
-    # Clean up environments
-    train_env.close()
-    eval_env.close()
 
     # Evaluate both checkpoints in this folder (deterministic + stochastic, no
     # rendering, clean score) and save the results so performance can be read

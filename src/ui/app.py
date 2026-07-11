@@ -12,6 +12,7 @@ from ui.screens.home import HomeScreen
 from ui.screens.play import PlayScreen
 from ui.screens.test_model import TestModelScreen
 from ui.screens.train_model import TrainModelScreen
+from ui.screens.models import ModelsScreen
 
 
 def _pick_monospace_family():
@@ -94,7 +95,7 @@ class App(ctk.CTk):
         container.pack(fill="both", expand=True)
 
         self.screens = {}
-        for screen_cls in (HomeScreen, PlayScreen, TestModelScreen, TrainModelScreen):
+        for screen_cls in (HomeScreen, PlayScreen, TestModelScreen, TrainModelScreen, ModelsScreen):
             screen = screen_cls(container, self)
             screen.place(relx=0, rely=0, relwidth=1, relheight=1)
             self.screens[screen_cls.__name__] = screen

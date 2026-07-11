@@ -154,13 +154,18 @@ class TrainModelScreen(SubScreen):
         self.warning_frame.pack(fill="x", pady=(8, 0))
 
     def _switch_to_continue_for_collision(self):
-        match = self._collision_match
+        self.select_model_to_continue(self._collision_match)
+
+    def select_model_to_continue(self, info):
+        """Entry point for other screens (e.g. ModelsScreen's "Continue Training"
+        button) to land here with a specific model already selected in the
+        Continue Existing flow."""
         self.train_mode_seg.set("Continue Existing")
         self._on_train_mode_change("Continue Existing")
-        if match is not None:
-            card = self._continue_cards_by_path.get(match["path"])
+        if info is not None:
+            card = self._continue_cards_by_path.get(info["path"])
             if card is not None:
-                self._select_continue_card(match, card)
+                self._select_continue_card(info, card)
 
     # --- "Continue Existing" panel -------------------------------------------
 

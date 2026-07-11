@@ -5,9 +5,13 @@ Provides callbacks that hook into the SB3 training loop to log additional
 metrics beyond the standard reward/episode-length tracking.
 
 Classes:
-    DeathLogger - Tracks death causes (max-step timeout vs. collision) and
-                  reports percentages every 100k timesteps.
+    DeathLogger        - Tracks death causes (max-step timeout vs. collision) and
+                         reports percentages every 100k timesteps.
+    PeriodicCheckpoint - Periodically saves the in-progress model, so a crash
+                         mid-run doesn't lose the entire run.
 """
+
+import os
 
 from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
@@ -62,4 +66,24 @@ class DeathLogger(BaseCallback):
 
             self.last_reported_timestep = self.num_timesteps
 
+        return True  # Continue training
+
+
+class PeriodicCheckpoint(BaseCallback):
+    """
+    Periodically overwrites `last_model.zip` with the in-progress model, so a
+    crash (or killed process) loses at most `save_freq` calls of progress
+    instead of the whole run -- EvalCallback already gives `best_model` this
+    safety net via its own eval-triggered saves; this gives `last_model` the
+    same one.
+    """
+
+    def __init__(self, save_freq, save_path, verbose=0):
+        super().__init__(verbose)
+        self.save_freq = max(save_freq, 1)
+        self.save_path = save_path
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.save_freq == 0:
+            self.model.save(os.path.join(self.save_path, "last_model"))
         return True  # Continue training

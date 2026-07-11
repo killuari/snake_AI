@@ -5,7 +5,7 @@ ui/screens/home.py - Landing screen with the three main navigation tiles.
 import customtkinter as ctk
 
 from ui.theme import BG, TEXT, TEXT_MUTED, AMBER, GREEN, RED, BLUE
-from ui.widgets import _make_nav_item
+from ui.widgets import _make_nav_item, _make_outline_button
 
 
 class HomeScreen(ctk.CTkFrame):
@@ -37,3 +37,12 @@ class HomeScreen(ctk.CTkFrame):
                 font_title=app.font_card_title, font_small=app.font_small,
             )
             item.pack(pady=12)
+
+        # Secondary/utility action, not one of the four main modes -- tucked
+        # into a corner instead of joining the centered nav stack, and styled
+        # muted (not one of the four accent colors above) so it doesn't compete
+        # for attention with Play/Test/Train/Exit.
+        _make_outline_button(
+            self, "Models", TEXT_MUTED, lambda: app.show("ModelsScreen"),
+            app.font_small, width=110, height=36,
+        ).place(relx=0.98, rely=0.97, anchor="se")

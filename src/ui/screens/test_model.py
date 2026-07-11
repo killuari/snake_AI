@@ -17,8 +17,6 @@ class TestModelScreen(SubScreen):
         self.selected = None
         self.selected_card = None
 
-        models = _discover_models()
-
         # Packed with side="bottom" (bottom-most to topmost: log box, start
         # button, controls) so they always claim their own space first; only
         # list_frame (which has its own internal scrollbar) flexes/shrinks.
@@ -34,17 +32,30 @@ class TestModelScreen(SubScreen):
         self.speed_var = _make_slider_row(controls, "Speed", 1, 10, 1, 3, app.font_body, value_fmt=_speed_label)
         controls.pack(side="bottom", pady=(12, 0))
 
-        list_frame = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS)
-        list_frame.pack(side="top", fill="both", expand=True)
+        self.list_frame = ctk.CTkScrollableFrame(self.body, fg_color="transparent", corner_radius=RADIUS)
+        self.list_frame.pack(side="top", fill="both", expand=True)
 
+        self._refresh_models()
+
+    def _refresh_models(self):
+        """(Re)builds the model list from disk -- called once at init, and
+        again from ModelsScreen after a delete so a removed model doesn't
+        linger here as a (now-broken) clickable card."""
+        for child in self.list_frame.winfo_children():
+            child.destroy()
+        self.selected = None
+        self.selected_card = None
+        self.start_btn.configure(state="disabled")
+
+        models = _discover_models()
         if not models:
             ctk.CTkLabel(
-                list_frame, text="No trained models found yet. Train one first.",
-                font=app.font_body, text_color=TEXT_MUTED,
+                self.list_frame, text="No trained models found yet. Train one first.",
+                font=self.app.font_body, text_color=TEXT_MUTED,
             ).pack(pady=20)
         for info in models:
-            self._make_model_card(list_frame, info).pack(fill="x", pady=6)
-        _enable_mousewheel(list_frame)
+            self._make_model_card(self.list_frame, info).pack(fill="x", pady=6)
+        _enable_mousewheel(self.list_frame)
 
     def _make_model_card(self, parent, info):
         frame = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=RADIUS, border_width=2, border_color=BORDER)
