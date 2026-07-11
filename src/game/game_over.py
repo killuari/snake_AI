@@ -68,10 +68,27 @@ def run_game_over(screen, clock, final_score, fps=60):
     score_font = pygame.font.Font(None, max(30, w // 20))
     btn_font = pygame.font.Font(None, 36)
 
+    # Title/score fonts scale with window width (above), but static pixel
+    # offsets don't -- render once (their content is fixed for this whole
+    # call anyway) and stack title -> score -> buttons from their actual
+    # rendered heights, so bigger grids (bigger fonts) never overlap the way
+    # fixed "cy - 60"/"cy - 15" offsets used to on Medium/Large presets.
+    title = title_font.render("GAME OVER", True, COLOR_APPLE)
+    score_text = score_font.render(f"Score: {final_score}", True, COLOR_SCORE_TEXT)
+
+    title_to_score_gap = 8
+    score_to_buttons_gap = 32
     bw, bh, gap = 180, 52, 24
     cx, cy = w // 2, h // 2
-    restart_rect = pygame.Rect(cx - bw - gap // 2, cy + 40, bw, bh)
-    quit_rect = pygame.Rect(cx + gap // 2, cy + 40, bw, bh)
+
+    block_h = title.get_height() + title_to_score_gap + score_text.get_height() + score_to_buttons_gap + bh
+    top = cy - block_h // 2
+
+    title_rect = title.get_rect(midtop=(cx, top))
+    score_rect = score_text.get_rect(midtop=(cx, title_rect.bottom + title_to_score_gap))
+    buttons_top = score_rect.bottom + score_to_buttons_gap
+    restart_rect = pygame.Rect(cx - bw - gap // 2, buttons_top, bw, bh)
+    quit_rect = pygame.Rect(cx + gap // 2, buttons_top, bw, bh)
 
     # --- 3) interactive overlay: "GAME OVER" + score + Restart/Quit ---
     while True:
@@ -93,10 +110,8 @@ def run_game_over(screen, clock, final_score, fps=60):
         screen.blit(backdrop, (0, 0))
         screen.blit(dark, (0, 0))
 
-        title = title_font.render("GAME OVER", True, COLOR_APPLE)
-        score_text = score_font.render(f"Score: {final_score}", True, COLOR_SCORE_TEXT)
-        screen.blit(title, title.get_rect(center=(cx, cy - 60)))
-        screen.blit(score_text, score_text.get_rect(center=(cx, cy - 15)))
+        screen.blit(title, title_rect)
+        screen.blit(score_text, score_rect)
 
         _draw_button(screen, restart_rect, "Restart", btn_font, mouse, COLOR_SNAKE_HEAD)
         _draw_button(screen, quit_rect, "Quit", btn_font, mouse, COLOR_APPLE)
