@@ -65,6 +65,7 @@ class SnakeGameEnvironment(gym.Env):
         # Pygame objects (lazy-initialized on first render)
         self.screen = None
         self.clock = None
+        self.font = None
 
         # Debug visualization (human render mode only), toggled with the 'f' key:
         # highlights the FOV the model currently observes and shows an arrow

@@ -11,29 +11,32 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 from ui.theme import PANEL, TEXT, TEXT_MUTED, BORDER, RADIUS
 
-# (tag, subplot label) -- only plotted once actually present in the run's event
-# file (e.g. DQN doesn't log train/loss until learning_starts steps are
-# collected, so an early poll may only have rollout/ep_rew_mean).
+# (tag, subplot label) -- all subplots are built up front so their (shared)
+# x-axis is visible from the start, even for tags with no data yet (e.g. DQN
+# doesn't log train/loss until learning_starts steps are collected) -- only
+# each tag's own line waits for its data to actually appear.
 _PLOTTED_TAGS = [
     ("rollout/ep_rew_mean", "Mean episode reward"),
     ("train/loss", "Loss"),
 ]
 
+_DPI = 100
+
 
 class LiveTrainingPlot(ctk.CTkFrame):
     """A small reward/loss plot that redraws whenever `.update(log_dir)` is
     called -- cheap to call repeatedly (e.g. from a polling timer) since it
-    only rebuilds its subplots when the *set* of available tags changes,
+    only builds its subplots once (the first call with any data at all),
     otherwise just updates the existing lines' data."""
 
-    def __init__(self, parent, app, height=220):
+    def __init__(self, parent, app, height=672):
         super().__init__(parent, fg_color=PANEL, corner_radius=RADIUS, height=height)
         self.app = app
         self._axes = {}
         self._lines = {}
         self._marker_artists = []
 
-        self._fig = Figure(dpi=100)
+        self._fig = Figure(figsize=(6.4, height / _DPI), dpi=_DPI)
         self._fig.patch.set_facecolor(PANEL)
         # Named _mpl_canvas, not _canvas -- CTkFrame itself already uses
         # self._canvas internally (its own rounded-corner rendering canvas);
@@ -69,33 +72,46 @@ class LiveTrainingPlot(ctk.CTkFrame):
         ea = EventAccumulator(log_dir)
         ea.Reload()
         available = ea.Tags().get("scalars", [])
-        plots = [(tag, label) for tag, label in _PLOTTED_TAGS if tag in available]
-        if not plots:
+        if not any(tag in available for tag, _ in _PLOTTED_TAGS):
             return
 
         self._placeholder.place_forget()
 
-        if set(tag for tag, _ in plots) != set(self._axes.keys()):
-            # The set of plottable tags grew (e.g. train/loss just started
-            # appearing) -- rebuild the subplot layout to fit all of them.
+        if not self._axes:
+            # First data of any kind for this run -- build every subplot in
+            # _PLOTTED_TAGS up front (not just the ones with data yet) so the
+            # loss subplot's axis is visible immediately instead of popping
+            # in once train/loss starts logging; otherwise the reward
+            # subplot would balloon to the whole figure's height until then.
             self._fig.clear()
             self._axes = {}
             self._lines = {}
-            for i, (tag, label) in enumerate(plots):
-                ax = self._fig.add_subplot(len(plots), 1, i + 1)
+            shared_ax = None
+            for i, (tag, label) in enumerate(_PLOTTED_TAGS):
+                # sharex so the reward and loss subplots always cover the
+                # same timestep range -- otherwise each autoscales to its own
+                # data (loss starts logging late, at learning_starts steps)
+                # and the same continue marker lands at different x-pixels
+                # on each subplot.
+                ax = self._fig.add_subplot(len(_PLOTTED_TAGS), 1, i + 1, sharex=shared_ax)
+                shared_ax = shared_ax or ax
                 ax.set_ylabel(label, color=TEXT)
                 ax.set_facecolor(PANEL)
                 ax.tick_params(colors=TEXT_MUTED, labelsize=8)
                 for spine in ax.spines.values():
                     spine.set_color(BORDER)
-                if i == len(plots) - 1:
+                if i == len(_PLOTTED_TAGS) - 1:
                     ax.set_xlabel("Timesteps", color=TEXT)
+                else:
+                    ax.tick_params(labelbottom=False)
                 line, = ax.plot([], [], color="#4d96ff")
                 self._axes[tag] = ax
                 self._lines[tag] = line
             self._fig.tight_layout()
 
-        for tag, _ in plots:
+        for tag, _ in _PLOTTED_TAGS:
+            if tag not in available:
+                continue  # no data logged for this tag yet -- leave its axis empty but visible
             events = ea.Scalars(tag)
             self._lines[tag].set_data([e.step for e in events], [e.value for e in events])
             self._axes[tag].relim()

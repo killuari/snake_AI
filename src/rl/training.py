@@ -9,6 +9,7 @@ Functions:
 import os
 import json
 import glob
+import time
 import numpy as np
 
 from stable_baselines3 import PPO, DQN
@@ -19,7 +20,11 @@ from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 
 from game.environment import SnakeGameEnvironment, make_snake_env
-from rl.paths import GRID_SIZE, PPO_PATH, DQN_PATH, LOG_PATH, _find_checkpoint, _finalize_checkpoint, _record_continue_marker
+from rl.paths import (
+    GRID_SIZE, PPO_PATH, DQN_PATH, TB_RUN_NAME, tensorboard_log_dir, replay_buffer_path,
+    _find_checkpoint, _finalize_checkpoint, _record_continue_marker,
+    _snapshot_run_dir, _discard_run_artifacts,
+)
 from rl.callbacks import DeathLogger, PeriodicCheckpoint
 from rl.feature_extractors import SnakeCombinedExtractor
 from rl.hyperparameter_tuning import load_best_params
@@ -104,7 +109,7 @@ def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_
     return results
 
 
-def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=3_000_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False, use_cnn=False, cancel_event=None, discard_event=None, on_log_dir=None):
+def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radius=3, timesteps=3_000_000, num_envs=4, new=True, params=None, best=True, use_tuned_params=False, use_cnn=False, cancel_event=None, discard_event=None, on_log_dir=None, on_frame=None):
     """
     Train a DQN or PPO agent on the Snake environment.
 
@@ -142,13 +147,27 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                           training, not just at the end (unlike this function's own
                           return value) -- so callers (e.g. the UI) can live-poll the
                           same event file while training is still running.
+        on_frame:         Optional callable(np.ndarray), invoked periodically (throttled
+                          to roughly every 0.12s of wall-clock time, not every step) with
+                          an (H, W, 3) uint8 RGB frame rendered by training-env worker 0,
+                          so a UI can show a live view of training. render_mode is only
+                          switched on for train_env when this is provided -- zero extra
+                          overhead otherwise.
     """
     obs_mode = "grid" if use_cnn else "flat"
     policy = "MultiInputPolicy" if use_cnn else "MlpPolicy"
     policy_kwargs = {"features_extractor_class": SnakeCombinedExtractor} if use_cnn else None
 
-    # Create parallel training environments (one per subprocess)
-    train_env = SubprocVecEnv([make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, obs_mode=obs_mode) for _ in range(num_envs)])
+    # Create parallel training environments (one per subprocess). render_mode
+    # is only turned on when on_frame is requested -- render() is only ever
+    # actually called on worker 0 (see _FrameCallback below), so enabling it
+    # uniformly across all workers costs nothing on the ones it's never
+    # called on.
+    train_env_render_mode = "rgb_array" if on_frame is not None else None
+    train_env = SubprocVecEnv([
+        make_snake_env(GRID_SIZE, grid_width, grid_height, snake_fov_radius, obs_mode=obs_mode, render_mode=train_env_render_mode)
+        for _ in range(num_envs)
+    ])
 
     # Create a single evaluation environment with a step limit to prevent infinite episodes.
     # training=False disables reward shaping/penalties, so EvalCallback's mean_reward
@@ -158,22 +177,43 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
     raw_eval_env = TimeLimit(raw_eval_env, max_episode_steps=10000)
     eval_env = Monitor(raw_eval_env, filename=None)
 
+    # Set below (to the loaded checkpoint's cumulative timestep count) when
+    # continuing an existing model -- but the actual continue_markers.json
+    # write is deferred until we know the run wasn't discarded (see the
+    # discard_event handling below), so a discarded continuation never
+    # permanently pollutes it.
+    continue_marker_step = None
+
     if model_name == "DQN":
         # Build the save/load path based on obs_mode, grid size, and FOV
         path = os.path.join(DQN_PATH, "GRID" if use_cnn else "FLAT", f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
             # Resume training from a saved model (policy/feature-extractor are restored from the checkpoint)
-            model = DQN.load(_find_checkpoint(path, "best_model" if best else "last_model"), train_env, device='cpu', verbose=1, tensorboard_log=LOG_PATH)
-            # Give exploration a fresh cycle over just this continuation's
-            # timesteps instead of starting already at its epsilon floor (see
-            # _rebase_schedule_for_continuation's docstring) -- deliberately
-            # not done for the learning rate, see the same docstring.
-            model.exploration_schedule = _rebase_schedule_for_continuation(model.exploration_schedule, model, timesteps)
-            # Record where this continuation resumed from, so the UI's live
-            # plot can draw a vertical line there (see ui/plot_window.py) --
+            model = DQN.load(_find_checkpoint(path, "best_model" if best else "last_model"), train_env, device='cpu', verbose=1, tensorboard_log=tensorboard_log_dir(path))
+            # Restore the replay buffer saved at the end of the previous run
+            # (see the final-save block below) so this continuation genuinely
+            # resumes training -- same buffer contents, same exploration
+            # schedule state -- instead of restarting with an empty buffer,
+            # matching "train 3M then 3M more" to "train 6M in one go".
+            buffer_path = replay_buffer_path(path)
+            if os.path.exists(buffer_path):
+                model.load_replay_buffer(buffer_path)
+            else:
+                # No saved buffer (e.g. a model continued for the first time
+                # since before this feature existed) -- fall back to the old
+                # behavior: give exploration a fresh cycle over just this
+                # continuation's timesteps instead of starting already at its
+                # epsilon floor with an empty buffer to learn from (see
+                # _rebase_schedule_for_continuation's docstring; deliberately
+                # not applied to the learning rate, see the same docstring).
+                model.exploration_schedule = _rebase_schedule_for_continuation(model.exploration_schedule, model, timesteps)
+            # Where this continuation resumed from, so the UI's live plot can
+            # draw a vertical line there (see ui/plot_window.py) --
             # model.num_timesteps here is the loaded checkpoint's cumulative
             # count, i.e. exactly the x-position this continuation starts at.
-            _record_continue_marker(path, model.num_timesteps)
+            # Captured now (before .learn() mutates num_timesteps); actually
+            # recorded further down, once we know the run wasn't discarded.
+            continue_marker_step = model.num_timesteps
         else:
             # Default DQN hyperparameters, or previously tuned ones from Optuna
             if params is None:
@@ -215,19 +255,19 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                 target_update_interval = params["target_update_interval"],
                 exploration_fraction = params["exploration_fraction"],
                 exploration_final_eps = params["exploration_final_eps"],
-                device='cpu', verbose=1, tensorboard_log=LOG_PATH
+                device='cpu', verbose=1, tensorboard_log=tensorboard_log_dir(path)
             )
     else:
         # PPO branch
         path = os.path.join(PPO_PATH, "GRID" if use_cnn else "FLAT", f"GRID_{grid_width}_{grid_height}", f"FOV_RADIUS_{snake_fov_radius}")
         if not new:
-            model = PPO.load(path=_find_checkpoint(path, "best_model" if best else "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True, tensorboard_log=LOG_PATH)
+            model = PPO.load(path=_find_checkpoint(path, "best_model" if best else "last_model"), env=train_env, device='cpu', verbose=1, force_reset=True, tensorboard_log=tensorboard_log_dir(path))
             # No schedule rebase here (unlike DQN's exploration_schedule above) --
             # PPO has no exploration_schedule, and the learning rate deliberately
             # keeps SB3's natural continued-decay behavior (see
             # _rebase_schedule_for_continuation's docstring for why).
             # Same continuation marker as the DQN branch above.
-            _record_continue_marker(path, model.num_timesteps)
+            continue_marker_step = model.num_timesteps
 
             print(f"Successfully loaded PPO Model ({model._total_timesteps} total_timesteps) [from Path: {path}]")
         else:
@@ -243,7 +283,7 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                 ent_coef=0.01,         # Small entropy bonus: SB3's PPO default is 0.0 (no exploration
                                        # incentive at all), risky with Snake's sparse reward
                 learning_rate=linear_schedule(3e-4),  # Makes SB3's previously-implicit default explicit and lets it decay
-                device='cpu', verbose=1, tensorboard_log=LOG_PATH
+                device='cpu', verbose=1, tensorboard_log=tensorboard_log_dir(path)
             )
 
     # Stop training early once mean reward is clearly very good. Scaled to board
@@ -293,17 +333,50 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                 return True
         callbacks.append(_LogDirCallback())
 
+    if on_frame is not None:
+        class _FrameCallback(BaseCallback):
+            """Periodically pulls one rendered frame from training-env worker 0
+            and hands it to on_frame(), throttled by wall-clock time (not step
+            count) -- _on_step() fires once per vectorized step across all
+            num_envs workers combined, which can be hundreds/thousands of times
+            a second, while the UI can only usefully redraw every ~100-150ms
+            anyway (see ui/game_view.py)."""
+            def __init__(self, on_frame, min_interval=0.12):
+                super().__init__()
+                self._on_frame_cb = on_frame
+                self._min_interval = min_interval
+                self._last_frame_time = 0.0
+
+            def _on_step(self) -> bool:
+                now = time.time()
+                if now - self._last_frame_time >= self._min_interval:
+                    self._last_frame_time = now
+                    try:
+                        frame = self.training_env.env_method("render", indices=[0])[0]
+                    except Exception:
+                        frame = None  # Transient IPC hiccup -- skip this tick, don't kill the run
+                    if frame is not None:
+                        self._on_frame_cb(frame)
+                return True
+        callbacks.append(_FrameCallback(on_frame))
+
+    # Snapshot the tensorboard run dir's contents before .learn() starts
+    # writing to it, so a discarded run can be told apart from whatever was
+    # legitimately there already (see the discard_event handling below).
+    pre_existing_tb_files = _snapshot_run_dir(path)
+
     # train_env/eval_env are real OS subprocesses (SubprocVecEnv) -- guarantee
     # they're always closed exactly once, whether training finishes normally,
     # is cancelled (discarded or not), or raises.
     try:
-        # Start training. tb_log_name gives the tensorboard run a descriptive
-        # subfolder instead of a generic "DQN_1" -- SB3's configure_logger()
+        # Start training. tb_log_name doesn't need to be descriptive -- unlike
+        # the old shared Training/Logs/ tree, tensorboard_log= above already
+        # nests the run under this model's own, already-unique checkpoint
+        # folder (see TB_RUN_NAME's docstring). SB3's configure_logger()
         # deliberately reuses the same run folder (doesn't bump the run number)
         # when reset_num_timesteps=False, so a "Continue Existing" run's reward
         # curve keeps appending to the original run's, not starting a new one.
-        tb_log_name = f"{model_name}_{grid_width}x{grid_height}_FOV{snake_fov_radius}"
-        model.learn(total_timesteps=timesteps, callback=callbacks, reset_num_timesteps=False, tb_log_name=tb_log_name)
+        model.learn(total_timesteps=timesteps, callback=callbacks, reset_num_timesteps=False, tb_log_name=TB_RUN_NAME)
 
         if discard_event is not None and discard_event.is_set():
             print("\nTraining cancelled -- discarding this run (nothing saved).")
@@ -315,7 +388,19 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
                 stray = os.path.join(path, f"{prefix}.zip")
                 if os.path.exists(stray):
                     os.remove(stray)
+            # Same for the tensorboard event file(s) this attempt wrote --
+            # without this they'd sit in the same tb_0 folder as legitimate
+            # runs and get merged into future plots (see
+            # _discard_run_artifacts's docstring).
+            _discard_run_artifacts(path, pre_existing_tb_files)
             return
+
+        # This run wasn't discarded (finished normally, or was cancelled but
+        # kept via "Cancel & Save Last Model") -- now safe to actually record
+        # the continuation marker captured above, if this was a "Continue
+        # Existing" run.
+        if continue_marker_step is not None:
+            _record_continue_marker(path, continue_marker_step)
 
         # EvalCallback only evaluates every eval_freq calls, so the final stretch of
         # training (up to eval_freq-1 calls) may never have been checked -- evaluate
@@ -336,6 +421,16 @@ def train_model(model_name="DQN", grid_width=30, grid_height=20, snake_fov_radiu
 
         # Always save the final model (in addition to the best model saved by EvalCallback)
         model.save(os.path.join(path, "last_model"))
+
+        if model_name == "DQN":
+            # Snapshot the replay buffer so the next "Continue Existing" run
+            # can resume from it instead of starting empty (see the load
+            # branch above) -- only at this natural end point, not from
+            # PeriodicCheckpoint's crash-safety saves, since buffer files are
+            # large (~1.5-2GB); a mid-run crash just falls back to the
+            # graceful empty-buffer path on the next continuation, same as
+            # before this feature existed.
+            model.save_replay_buffer(replay_buffer_path(path))
 
         # Bake the cumulative trained timesteps into the checkpoint filenames (e.g.
         # "best_model_3000000.zip"). model.num_timesteps already reflects the right

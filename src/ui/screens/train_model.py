@@ -17,6 +17,7 @@ from ui.widgets import (
 )
 from ui.models import _discover_models, _read_continue_markers
 from ui.plot_window import LiveTrainingPlot
+from ui.game_view import LiveGameView
 from ui.screens.base import SubScreen
 
 
@@ -41,6 +42,8 @@ class TrainModelScreen(SubScreen):
         self._discard_event = None
         self._current_log_dir = None
         self._current_model_path = None
+        self._current_resume_step = None
+        self._current_frame = None
 
         # The whole form -- mode toggle, algo/obs/grid/fov (or the continue-
         # model list), timesteps/parallel-envs/tuned-checkbox, start button,
@@ -81,6 +84,15 @@ class TrainModelScreen(SubScreen):
             fg_color=AMBER, hover_color=_mix(AMBER, "#000000", 0.2), border_color=BORDER,
         )
         self.tuned_checkbox.pack(anchor="w", pady=(8, 4))
+
+        self.render_var = tk.BooleanVar(value=False)
+        self.render_checkbox = ctk.CTkCheckBox(
+            shared, text="Render training live (below)", variable=self.render_var,
+            font=app.font_small, text_color=TEXT, checkbox_width=18, checkbox_height=18,
+            fg_color=BLUE, hover_color=_mix(BLUE, "#000000", 0.2), border_color=BORDER,
+            command=self._update_game_view_visibility,
+        )
+        self.render_checkbox.pack(anchor="w", pady=(4, 4))
         shared.pack(fill="y", pady=(16, 0))
 
         self.start_btn = _make_outline_button(self.outer_scroll, "Start Training", BLUE, self._start, app.font_body, width=220, height=44)
@@ -95,6 +107,18 @@ class TrainModelScreen(SubScreen):
         # styling to SubScreen._make_log_box's default, just more height.
         log_box = self._make_log_box(self.outer_scroll, height=400)
         log_box.pack(fill="both", expand=False, pady=(0, 8))
+
+        # Live view of the training environment (worker 0's rendered frame) --
+        # packed immediately (even though hidden by default, see
+        # _update_game_view_visibility) so it occupies the right slot in the
+        # pack order, between the log and the plot, regardless of when the
+        # "Render training live" checkbox is later toggled: Tk's packer always
+        # appends a freshly-.pack()ed widget to the END of its master's
+        # current pack order unless before=/after= is given, so deferring the
+        # first .pack() call until check-time would put it below plot_widget
+        # instead of above it.
+        self.game_view = LiveGameView(self.outer_scroll, app)
+        self._update_game_view_visibility()
 
         # Live reward/loss graph below the text log -- polled while training
         # runs (see _poll_plot()), not just shown once at the end, since
@@ -317,6 +341,18 @@ class TrainModelScreen(SubScreen):
             self.tuned_var.set(False)
             self.tuned_checkbox.configure(state="disabled")
 
+    def _update_game_view_visibility(self):
+        """Shows/hides the live game view based on the checkbox -- kept hidden
+        (not just empty) when off, so users who never use this feature don't
+        pay a permanent vertical-space cost for it. after=self.log_box pins it
+        to the log-box -> game-view -> plot order every time it's re-shown,
+        since Tk's packer appends a freshly re-.pack()ed widget to the end of
+        its master's current pack order otherwise."""
+        if self.render_var.get():
+            self.game_view.pack(fill="x", pady=(0, 8), after=self.log_box)
+        else:
+            self.game_view.pack_forget()
+
     def _update_start_enabled(self):
         if self._is_training or not hasattr(self, "start_btn"):
             return
@@ -355,6 +391,7 @@ class TrainModelScreen(SubScreen):
             )
             # No continuation history yet for a fresh model.
             self._current_model_path = None
+            self._current_resume_step = None
         else:
             info = self._continue_selected
             if info is None:
@@ -372,6 +409,14 @@ class TrainModelScreen(SubScreen):
             # plot show past "Continue Existing" markers from the very first
             # poll, not just once training.py writes a new one.
             self._current_model_path = info["path"]
+            # The exact step this run will resume from -- info["best_timesteps"]/
+            # ["last_timesteps"] is parsed straight from the checkpoint filename
+            # (see rl.paths._finalize_checkpoint), i.e. exactly what
+            # model.num_timesteps becomes right after load. Lets _read_markers()
+            # show this continuation's marker immediately, before
+            # rl.training.train_model() has actually persisted it (which it
+            # deliberately defers until the run isn't discarded).
+            self._current_resume_step = info["best_timesteps"] if kwargs["best"] else info["last_timesteps"]
 
         kwargs.update(
             timesteps=timesteps,
@@ -386,11 +431,17 @@ class TrainModelScreen(SubScreen):
         self._current_log_dir = None
         kwargs["on_log_dir"] = self._on_log_dir_known
 
+        self._current_frame = None
+        if self.render_var.get():
+            kwargs["on_frame"] = self._on_frame_received
+
         self._is_training = True
         self.start_btn.configure(text="Cancel Training", command=self._request_cancel)
         self.plot_widget.reset()
+        self.game_view.reset()
         self._start_background(train_model, kwargs, self.start_btn, on_finish=self._on_training_finished)
         self._poll_plot()
+        self._poll_frame()
 
     def _on_log_dir_known(self, log_dir):
         """Called from the training thread (train_model()'s on_log_dir
@@ -407,13 +458,41 @@ class TrainModelScreen(SubScreen):
         self.plot_widget.update(self._current_log_dir, self._read_markers())
         self.after(1500, self._poll_plot)
 
+    def _on_frame_received(self, frame):
+        """Called from the training thread (train_model()'s on_frame callback,
+        throttled to ~every 0.12s -- see rl/training.py's _FrameCallback) --
+        plain attribute assignment only, no ctk/Tk calls from this thread
+        (mirrors _on_log_dir_known). _poll_frame() on the main thread picks
+        this up and updates the widget."""
+        self._current_frame = frame
+
+    def _poll_frame(self):
+        """Redraws the live game view every ~120ms while training is running --
+        much faster than the plot's 1.5s cadence (_poll_plot), since this is
+        meant to feel "live"; kept as its own self-rescheduling loop rather
+        than merged into _poll_plot because the two need very different
+        cadences for very different reasons: the plot only usefully changes at
+        eval/log intervals, while a 1.5s cadence here would look laggy."""
+        if not self._is_training:
+            return
+        self.game_view.update(self._current_frame)
+        self.after(120, self._poll_frame)
+
     def _read_markers(self):
         """Continuation-start markers for the model currently training (see
         rl.paths._record_continue_marker), or [] for a fresh "New Model" run
-        (self._current_model_path is None) which has no continuation history."""
+        (self._current_model_path is None) which has no continuation history.
+        While a "Continue Existing" run is still in progress, also includes
+        this run's own resume step -- rl.training.train_model() deliberately
+        defers actually persisting it to continue_markers.json until the run
+        is confirmed not discarded, so without this the marker wouldn't show
+        up live until training finishes."""
         if self._current_model_path is None:
             return []
-        return _read_continue_markers(self._current_model_path)
+        markers = _read_continue_markers(self._current_model_path)
+        if self._is_training and self._current_resume_step is not None and self._current_resume_step not in markers:
+            markers = markers + [self._current_resume_step]
+        return markers
 
     def _on_training_finished(self):
         self._is_training = False
@@ -431,6 +510,10 @@ class TrainModelScreen(SubScreen):
         # _start_background()'s worker(); _current_log_dir covers the discard
         # case too (train_model() still reports it before discarding).
         self.plot_widget.update(self._last_result or self._current_log_dir, self._read_markers())
+        # Freeze on the last frame rather than clearing to a placeholder --
+        # matches the plot widget above, which also keeps showing the
+        # finished run's graph instead of resetting.
+        self.game_view.update(self._current_frame)
 
     def _request_cancel(self):
         show_confirm_dialog(

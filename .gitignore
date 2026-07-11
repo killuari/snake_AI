@@ -1,2 +1,4 @@
 __pycache__/
 .venv
+Training/SAVED_MODELS/**/logs/
+Training/SAVED_MODELS/**/replay_buffer.pkl

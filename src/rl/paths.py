@@ -6,6 +6,9 @@ Checkpoint directory convention:
         best_model_{timesteps}.zip
         last_model_{timesteps}.zip
         evaluation.json
+        continue_markers.json
+        logs/tb_0/events.out.tfevents...
+        replay_buffer.pkl (DQN only)
 """
 
 import os
@@ -22,10 +25,72 @@ GRID_SIZE = 30
 # position fix in game/snake_game.py). All three keep a 3:2 aspect ratio.
 GRID_PRESETS = [("Small (30x20)", 30, 20), ("Medium (45x30)", 45, 30), ("Large (60x40)", 60, 40)]
 
-# Paths for saving/loading trained models and training logs
-LOG_PATH = os.path.join("Training", "Logs")
+# Paths for saving/loading trained models
 PPO_PATH = os.path.join("Training", "SAVED_MODELS", "PPO")
 DQN_PATH = os.path.join("Training", "SAVED_MODELS", "DQN")
+
+# tb_log_name passed to model.learn(). Doesn't need to encode model_name/grid/
+# fov itself (unlike the checkpoint path) -- tensorboard_log_dir() below
+# already nests this under each model's own, already-unique checkpoint
+# folder. With reset_num_timesteps=False (always used by rl.training), SB3's
+# configure_logger()/get_latest_run_id() deterministically resolve this to
+# "{tensorboard_log_dir(path)}/tb_0" on every call, new or continue -- never
+# incrementing (verified against stable_baselines3/common/utils.py).
+TB_RUN_NAME = "tb"
+
+
+def tensorboard_log_dir(path):
+    """Nested tensorboard log directory for a model's checkpoint folder --
+    pass as tensorboard_log= to DQN()/DQN.load()/PPO()/PPO.load()."""
+    return os.path.join(path, "logs")
+
+
+def replay_buffer_path(path):
+    """Path to a DQN model's persisted replay buffer -- saved once at the end
+    of each successful run (rl.training.train_model()) and reloaded on
+    "Continue Existing" so continuing behaves like one uninterrupted run
+    instead of restarting with an empty buffer and a freshly-reset
+    exploration schedule."""
+    return os.path.join(path, "replay_buffer.pkl")
+
+
+def tb_run_dir(path):
+    """The exact, deterministic tensorboard run directory model.learn()
+    writes to for this model (see TB_RUN_NAME's docstring: always
+    logs/tb_0)."""
+    return os.path.join(tensorboard_log_dir(path), f"{TB_RUN_NAME}_0")
+
+
+def _snapshot_run_dir(path):
+    """Filenames already in path's tensorboard run dir before model.learn()
+    starts -- used by _discard_run_artifacts() to work out exactly what a
+    discarded run wrote, so only that gets deleted."""
+    run_dir = tb_run_dir(path)
+    return set(os.listdir(run_dir)) if os.path.isdir(run_dir) else set()
+
+
+def _discard_run_artifacts(path, pre_existing_files):
+    """
+    Delete only the tensorboard event file(s) this run just wrote (anything
+    in tb_run_dir(path) not present in pre_existing_files), and clean up the
+    run/logs directories if that leaves them empty -- so a discarded
+    "Continue Existing" or "New Model" run leaves the folder exactly as it
+    was before it started, instead of permanently polluting future plots
+    with the abandoned attempt's data (SB3 always reuses the same tb_0
+    folder, see TB_RUN_NAME's docstring, so without this the discarded
+    run's event file would sit right next to -- and get merged with -- the
+    legitimate ones).
+    """
+    run_dir = tb_run_dir(path)
+    if not os.path.isdir(run_dir):
+        return
+    for name in set(os.listdir(run_dir)) - pre_existing_files:
+        os.remove(os.path.join(run_dir, name))
+    if not os.listdir(run_dir):
+        os.rmdir(run_dir)
+        logs_dir = tensorboard_log_dir(path)
+        if os.path.isdir(logs_dir) and not os.listdir(logs_dir):
+            os.rmdir(logs_dir)
 
 
 def _finalize_checkpoint(path, prefix, total_timesteps):
