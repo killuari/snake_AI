@@ -15,7 +15,8 @@ from ui.widgets import (
     _make_content_column, _make_choice_row, _make_slider_row, _make_entry_row,
     _make_outline_button, _bind_recursive, _enable_mousewheel, show_confirm_dialog, _make_model_badge,
 )
-from ui.models import _discover_models
+from ui.models import _discover_models, _read_continue_markers
+from ui.plot_window import LiveTrainingPlot
 from ui.screens.base import SubScreen
 
 
@@ -38,6 +39,8 @@ class TrainModelScreen(SubScreen):
         self._is_training = False
         self._cancel_event = None
         self._discard_event = None
+        self._current_log_dir = None
+        self._current_model_path = None
 
         # The whole form -- mode toggle, algo/obs/grid/fov (or the continue-
         # model list), timesteps/parallel-envs/tuned-checkbox, start button,
@@ -92,6 +95,13 @@ class TrainModelScreen(SubScreen):
         # styling to SubScreen._make_log_box's default, just more height.
         log_box = self._make_log_box(self.outer_scroll, height=400)
         log_box.pack(fill="both", expand=False, pady=(0, 8))
+
+        # Live reward/loss graph below the text log -- polled while training
+        # runs (see _poll_plot()), not just shown once at the end, since
+        # train_model()'s on_log_dir callback reports the tensorboard log
+        # directory right at the start of training.
+        self.plot_widget = LiveTrainingPlot(self.outer_scroll, app)
+        self.plot_widget.pack(fill="x", pady=(0, 8))
 
         self._on_algo_change("DQN")
         self._check_collision()
@@ -343,6 +353,8 @@ class TrainModelScreen(SubScreen):
                 use_cnn=self.obs_seg.get() == "GRID",
                 new=True,
             )
+            # No continuation history yet for a fresh model.
+            self._current_model_path = None
         else:
             info = self._continue_selected
             if info is None:
@@ -356,6 +368,10 @@ class TrainModelScreen(SubScreen):
                 new=False,
                 best=self.continue_checkpoint_seg.get() == "Best",
             )
+            # Known upfront (unlike the tensorboard log dir) -- lets the live
+            # plot show past "Continue Existing" markers from the very first
+            # poll, not just once training.py writes a new one.
+            self._current_model_path = info["path"]
 
         kwargs.update(
             timesteps=timesteps,
@@ -367,10 +383,37 @@ class TrainModelScreen(SubScreen):
         self._discard_event = threading.Event()
         kwargs["cancel_event"] = self._cancel_event
         kwargs["discard_event"] = self._discard_event
+        self._current_log_dir = None
+        kwargs["on_log_dir"] = self._on_log_dir_known
 
         self._is_training = True
         self.start_btn.configure(text="Cancel Training", command=self._request_cancel)
+        self.plot_widget.reset()
         self._start_background(train_model, kwargs, self.start_btn, on_finish=self._on_training_finished)
+        self._poll_plot()
+
+    def _on_log_dir_known(self, log_dir):
+        """Called from the training thread (train_model()'s on_log_dir
+        callback) as soon as the tensorboard log directory is known -- right
+        at the start of training, not just at the end."""
+        self._current_log_dir = log_dir
+
+    def _poll_plot(self):
+        """Redraws the live plot every ~1.5s while training is running --
+        much less often than the text log's 100ms poll, since tensorboard
+        itself only gets new data every eval/log interval, not every step."""
+        if not self._is_training:
+            return
+        self.plot_widget.update(self._current_log_dir, self._read_markers())
+        self.after(1500, self._poll_plot)
+
+    def _read_markers(self):
+        """Continuation-start markers for the model currently training (see
+        rl.paths._record_continue_marker), or [] for a fresh "New Model" run
+        (self._current_model_path is None) which has no continuation history."""
+        if self._current_model_path is None:
+            return []
+        return _read_continue_markers(self._current_model_path)
 
     def _on_training_finished(self):
         self._is_training = False
@@ -382,6 +425,12 @@ class TrainModelScreen(SubScreen):
         if self.train_mode_seg.get() == "New Model":
             self._check_collision()
         self._update_start_enabled()
+        # One last redraw to catch anything logged after _poll_plot()'s last
+        # tick (e.g. the final evaluation) -- _last_result is train_model()'s
+        # return value (the log dir, or None on discard/exception), set by
+        # _start_background()'s worker(); _current_log_dir covers the discard
+        # case too (train_model() still reports it before discarding).
+        self.plot_widget.update(self._last_result or self._current_log_dir, self._read_markers())
 
     def _request_cancel(self):
         show_confirm_dialog(

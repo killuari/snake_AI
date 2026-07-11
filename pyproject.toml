@@ -11,6 +11,8 @@ dependencies = [
     "stable-baselines3>=2.0.0",
     "optuna>=4.9.0",
     "customtkinter>=6.0.0",
+    "tensorboard>=2.15.0",
+    "matplotlib>=3.8.0",
 ]
 
 [build-system]

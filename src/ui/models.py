@@ -88,3 +88,15 @@ def _delete_model(path):
     """Permanently delete a model's whole checkpoint folder (best/last .zip +
     evaluation.json), as returned by _discover_models()'s "path" field."""
     shutil.rmtree(path)
+
+
+def _read_continue_markers(path):
+    """Read path/continue_markers.json (written by rl.training.train_model()
+    each time a "Continue Existing" run resumes -- see
+    rl.paths._record_continue_marker), or [] if this model was never
+    continued yet."""
+    marker_path = os.path.join(path, "continue_markers.json")
+    if not os.path.exists(marker_path):
+        return []
+    with open(marker_path) as file:
+        return json.load(file)

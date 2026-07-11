@@ -10,6 +10,7 @@ Checkpoint directory convention:
 
 import os
 import glob
+import json
 
 # Default grid cell size in pixels (used for all environments created here)
 GRID_SIZE = 30
@@ -48,3 +49,23 @@ def _find_checkpoint(path, prefix):
     if not matches:
         raise FileNotFoundError(f"No '{prefix}' checkpoint found in {path}")
     return max(matches, key=os.path.getmtime)
+
+
+def _record_continue_marker(path, step):
+    """
+    Append `step` (the cumulative timestep count a "Continue Existing" run
+    resumed from) to path/continue_markers.json, so the tensorboard plot can
+    draw a vertical line at every past continuation point, not just the
+    current one -- persisted so it survives app restarts and repeated
+    continuations. Skipped if identical to the last recorded marker (e.g. a
+    discarded continuation re-run from the same checkpoint).
+    """
+    marker_path = os.path.join(path, "continue_markers.json")
+    markers = []
+    if os.path.exists(marker_path):
+        with open(marker_path) as file:
+            markers = json.load(file)
+    if not markers or markers[-1] != step:
+        markers.append(step)
+        with open(marker_path, "w") as file:
+            json.dump(markers, file)

@@ -82,11 +82,13 @@ class SubScreen(ctk.CTkFrame):
             self.log_box.delete("1.0", "end")
             self.log_box.configure(state="disabled")
 
+        self._last_result = None
+
         def worker():
             old_stdout = sys.stdout
             sys.stdout = _QueueWriter(self._log_queue)
             try:
-                func(**kwargs)
+                self._last_result = func(**kwargs)
             except Exception as exc:
                 self._log_queue.put(f"Error: {exc}\n")
             finally:
