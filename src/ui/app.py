@@ -2,6 +2,7 @@
 ui/app.py - App: the root window, screen registry, and navigation.
 """
 
+import sys
 import tkinter.font as tkfont
 import customtkinter as ctk
 
@@ -60,7 +61,15 @@ class App(ctk.CTk):
         # as it's built, last-built on top) before show("HomeScreen") below
         # raises the right one, which reads as a brief flicker of the wrong
         # screen on every launch.
-        self.withdraw()
+        #
+        # Skipped on Windows: CTk.__init__() above already withdraws the
+        # window itself there (as part of its dark-titlebar setup, see
+        # customtkinter's ctk_tk.py), so this would be redundant -- and
+        # calling it ourselves sets an internal "withdraw requested before
+        # window exists" flag that makes CTk's first mainloop() call skip
+        # its own deiconify(), leaving the window permanently hidden.
+        if sys.platform != "win32":
+            self.withdraw()
 
         self.title("Snake RL - Launcher")
 

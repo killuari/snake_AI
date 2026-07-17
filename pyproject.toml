@@ -25,3 +25,9 @@ packages = ["src/game", "src/rl", "src/ui"]
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+
+[tool.uv]
+# Prefer system Python over uv's own downloaded/cached standalone builds:
+# uv's managed CPython builds ship a Tk with no FreeType/Xft linkage, which
+# breaks CustomTkinter rendering (rounded corners, font antialiasing) on some linux distros.
+python-preference = "system"

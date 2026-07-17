@@ -33,13 +33,31 @@ from rl.feature_extractors import SnakeCombinedExtractor
 from rl.hyperparameter_tuning import load_best_params
 
 
-def linear_schedule(initial_value):
+class _LinearSchedule:
     """Linearly decays from `initial_value` at training start to 0 by training
     end (SB3's own documented recipe for a decaying learning rate), as a
-    function of `progress_remaining` (1.0 at the start, 0.0 at the end)."""
-    def schedule(progress_remaining: float) -> float:
-        return progress_remaining * initial_value
-    return schedule
+    function of `progress_remaining` (1.0 at the start, 0.0 at the end).
+
+    A plain class, not a closure -- SB3 pickles this (as model.lr_schedule)
+    into every saved checkpoint. cloudpickle can only pickle a closure by
+    embedding its actual bytecode (no importable name to reference it by),
+    and loading+calling that bytecode under a different CPython minor version
+    than the one that saved it is undefined behavior -- observed in practice
+    as a hard segfault loading a Python-3.14-trained checkpoint under 3.13.
+    A class instance pickles by reference (its qualified name) plus plain
+    __dict__ data instead, which every CPython version can unpickle safely.
+    Mirrors SB3's own LinearSchedule (stable_baselines3.common.utils), which
+    uses the same class-not-closure shape for exactly this reason.
+    """
+    def __init__(self, initial_value):
+        self.initial_value = initial_value
+
+    def __call__(self, progress_remaining: float) -> float:
+        return progress_remaining * self.initial_value
+
+
+def linear_schedule(initial_value):
+    return _LinearSchedule(initial_value)
 
 
 def _rebase_schedule_for_continuation(schedule_fn, model, new_timesteps):
@@ -69,11 +87,21 @@ def _rebase_schedule_for_continuation(schedule_fn, model, new_timesteps):
     short run.
     """
     p_start = new_timesteps / (new_timesteps + model.num_timesteps)
+    return _RebasedSchedule(schedule_fn, p_start)
 
-    def rebased(progress_remaining):
-        local = min(1.0, progress_remaining / p_start) if p_start > 0 else 0.0
-        return schedule_fn(local)
-    return rebased
+
+class _RebasedSchedule:
+    """See _rebase_schedule_for_continuation's docstring above for the "why".
+    A plain class, not a closure, for the same cross-Python-version pickling
+    safety as _LinearSchedule -- this gets assigned to model.exploration_schedule,
+    which SB3 also pickles into the checkpoint on every save."""
+    def __init__(self, schedule_fn, p_start):
+        self.schedule_fn = schedule_fn
+        self.p_start = p_start
+
+    def __call__(self, progress_remaining):
+        local = min(1.0, progress_remaining / self.p_start) if self.p_start > 0 else 0.0
+        return self.schedule_fn(local)
 
 
 def evaluate_model_performance(model, grid_size, grid_width, grid_height, snake_fov_radius, obs_mode="flat", n_episodes=10, model_label=""):
